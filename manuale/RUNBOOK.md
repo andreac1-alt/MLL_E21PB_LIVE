@@ -116,10 +116,19 @@ Comando da fuori workspace:
 
 L'app espone:
 
-- stato dei run e prima `SD` mancante
-- ultimo portfolio disponibile
-- azioni per `BD`
-- `trade_state` e `trade_sizing` diagnostici
+- `Overview`: stato dei run e contesto generale
+- `Market`: semaforo, `Blue On`, breadth e diagnostica mercato
+- `First Screen`: artifact del primo screening sulla `SD`
+- `Second Screen`: artifact del secondo screening, widget chart ed ETF context
+- `Portfolio`: ultimo portfolio disponibile e posizioni aperte
+- `Operazioni`: tabella action-level da `portfolio_actions_daily.csv`
+- `Trade Console`: vista operativa ticker-level con dati, mercato, moltiplicatori, ETF filter ed entry
+
+Nota app:
+
+- la tab `Operazioni` mostra una riga per ogni operazione effettiva
+- l'ordinamento di default e' cronologico inverso, con le piu' recenti prima
+- nella `Trade Console` i moltiplicatori devono riflettere le stesse fonti usate da `3_build_portfolio_day.py`
 
 ## Stati Trade
 

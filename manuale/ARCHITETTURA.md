@@ -101,5 +101,27 @@ Comando standard:
 
 `cd "/Users/andreacecchini/SISTEMI DI TRADING/MLL1_E21PB_LIVE" && venv/bin/streamlit run app.py --server.port 8503`
 
-Serve per controllare run, market context, portfolio, azioni per `BD`,
-`trade_state` e `trade_sizing`.
+Tabs principali correnti:
+
+- `Overview`
+- `Market`
+- `First Screen`
+- `Second Screen`
+- `Portfolio`
+- `Operazioni`
+- `Trade Console`
+
+Responsabilita' principali:
+
+- `Overview`: stato generale del workspace live
+- `Market`: semaforo, `Blue On`, breadth e contesto mercato sulla `SD`
+- `First Screen` e `Second Screen`: lettura degli artifact `output/screening_day/`
+- `Portfolio`: stato portfolio e posizioni aperte
+- `Operazioni`: una riga per ogni action di `portfolio_actions_daily.csv`, in ordine cronologico inverso
+- `Trade Console`: console ticker-level per verifica baseline, mercato, moltiplicatori, ETF filter ed entry
+
+La `Trade Console` deve restare allineata alla pipeline live:
+
+- usa `SD` come data di screening e ricava la `BD`
+- legge `screening_day`, `etf_context`, `trade_state` e `portfolio_live`
+- i moltiplicatori mostrati devono usare le stesse fonti canoniche dello step 3 portfolio

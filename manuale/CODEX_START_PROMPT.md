@@ -62,7 +62,18 @@ Pipeline canonica nuova:
 App:
 - comando da fuori workspace:
   cd "/Users/andreacecchini/SISTEMI DI TRADING/MLL1_E21PB_LIVE" && venv/bin/streamlit run app.py --server.port 8503
-- tabs principali: Run, Market, Portfolio, Trade Console
+- tabs principali:
+  - Overview
+  - Market
+  - First Screen
+  - Second Screen
+  - Portfolio
+  - Operazioni
+  - Trade Console
+- Trade Console:
+  - usa semantica live SD -> BD
+  - mostra sezioni Dati, Mercato, Moltiplicatori, ETF Filter ed Entry
+  - i moltiplicatori devono leggere le stesse fonti canoniche dello step 3 portfolio
 
 Terminologia obbligatoria:
 - SD = screen date
