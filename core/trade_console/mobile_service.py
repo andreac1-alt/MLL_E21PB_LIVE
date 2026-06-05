@@ -216,43 +216,31 @@ def get_reference_etf_market_snapshot(screen_date: pd.Timestamp, ticker: str = "
 
 
 def compute_next_market_date(screen_date: pd.Timestamp) -> pd.Timestamp:
-    target_ts = pd.Timestamp(screen_date).normalize()
-    try:
-        history = load_daily_history_from_cache("SPY")
-        if not history.empty:
-            trading_dates = pd.Index(pd.to_datetime(history.index)).sort_values().unique()
-            next_dates = trading_dates[trading_dates > target_ts]
-            if len(next_dates) > 0:
-                return pd.Timestamp(next_dates[0]).normalize()
-    except Exception:
-        pass
+    import pandas_market_calendars as mcal
 
-    next_candidate = target_ts + pd.Timedelta(days=1)
-    for _ in range(7):
-        if next_candidate.weekday() < 5:
-            return next_candidate.normalize()
-        next_candidate += pd.Timedelta(days=1)
-    return next_candidate.normalize()
+    target_ts = pd.Timestamp(screen_date).normalize()
+    schedule = mcal.get_calendar("NYSE").schedule(
+        start_date=target_ts + pd.Timedelta(days=1),
+        end_date=target_ts + pd.Timedelta(days=14),
+    )
+    sessions = [pd.Timestamp(session_date).normalize() for session_date in schedule.index]
+    if not sessions:
+        raise FileNotFoundError(f"Nessuna BD trovata dopo SD={target_ts.date()}.")
+    return sessions[0]
 
 
 def compute_previous_market_date(screen_date: pd.Timestamp) -> pd.Timestamp:
-    target_ts = pd.Timestamp(screen_date).normalize()
-    try:
-        history = load_daily_history_from_cache("SPY")
-        if not history.empty:
-            trading_dates = pd.Index(pd.to_datetime(history.index)).sort_values().unique()
-            previous_dates = trading_dates[trading_dates < target_ts]
-            if len(previous_dates) > 0:
-                return pd.Timestamp(previous_dates[-1]).normalize()
-    except Exception:
-        pass
+    import pandas_market_calendars as mcal
 
-    previous_candidate = target_ts - pd.Timedelta(days=1)
-    for _ in range(7):
-        if previous_candidate.weekday() < 5:
-            return previous_candidate.normalize()
-        previous_candidate -= pd.Timedelta(days=1)
-    raise FileNotFoundError(f"Nessuna seduta precedente trovata prima di {target_ts.date()}.")
+    target_ts = pd.Timestamp(screen_date).normalize()
+    schedule = mcal.get_calendar("NYSE").schedule(
+        start_date=target_ts - pd.Timedelta(days=14),
+        end_date=target_ts - pd.Timedelta(days=1),
+    )
+    sessions = [pd.Timestamp(session_date).normalize() for session_date in schedule.index]
+    if not sessions:
+        raise FileNotFoundError(f"Nessuna SD trovata prima di BD={target_ts.date()}.")
+    return sessions[-1]
 
 
 def recompute_second_screen_row(ticker: str, screen_date: pd.Timestamp) -> dict[str, object] | None:
@@ -321,7 +309,7 @@ def build_trade_console_payload(
         "ticker": ticker_label,
         "screen_date": screen_ts,
         "target_date": screen_ts,
-        "requested_buy_date": buy_ts,
+        "bd": buy_ts,
         "etf_context": compute_context_score(ticker_label, target_date=screen_ts),
         "analysis_row": analysis_row or {},
         "price_snapshot": price_snapshot,
@@ -372,7 +360,7 @@ def build_estimated_trade_payload(
 def format_trade_console_payload(payload: dict[str, object]) -> str:
     ticker = str(payload["ticker"])
     screen_date = pd.Timestamp(payload.get("screen_date", payload["target_date"])).strftime("%Y-%m-%d")
-    buy_date = pd.Timestamp(payload["requested_buy_date"]).strftime("%Y-%m-%d")
+    buy_date = pd.Timestamp(payload["bd"]).strftime("%Y-%m-%d")
     analysis = payload.get("analysis_row", {})
     price = payload.get("price_snapshot", {})
     trade = payload.get("trade_result")
@@ -392,7 +380,7 @@ def format_trade_console_payload(payload: dict[str, object]) -> str:
         f"Dist SMA50: {format_value(analysis.get('dist_sma50_atr14_multiple'), 2, ' ATR')}",
         f"Semaforo: {analysis.get('semaforo_color') or 'N/D'}",
         f"BLUE ON: {format_bool(analysis.get('blue_on'))}",
-        f"Buy date: {buy_date}",
+        f"BD: {buy_date}",
     ]
     if etf_context is not None:
         context_score = getattr(etf_context, "context_score", None)
@@ -492,8 +480,8 @@ def build_check_message(ticker: str, screen_date: pd.Timestamp | None = None) ->
     return format_trade_console_payload(payload)
 
 
-def build_buy_message(ticker: str, buy_date: pd.Timestamp) -> str:
-    buy_ts = pd.Timestamp(buy_date).normalize()
+def build_buy_message(ticker: str, bd: pd.Timestamp) -> str:
+    buy_ts = pd.Timestamp(bd).normalize()
     screen_ts = compute_previous_market_date(buy_ts)
     ticker_label = str(ticker).strip().upper()
     second_screen_row = find_second_screen_row_for_date(ticker_label, screen_ts)
@@ -518,7 +506,7 @@ def build_buy_message(ticker: str, buy_date: pd.Timestamp) -> str:
         [
             ticker_label,
             f"Screen Date: {screen_ts.strftime('%Y-%m-%d')}",
-            f"Buy Date: {buy_ts.strftime('%Y-%m-%d')}",
+            f"BD: {buy_ts.strftime('%Y-%m-%d')}",
             f"Low SD: {format_value(price_snapshot.get('low'))}",
             f"Close SD: {format_value(price_snapshot.get('close'))}",
             f"MLL1_E21PB_BLUE: {'SI' if in_second_screen else 'NO'}",
@@ -533,19 +521,19 @@ def build_buy_message(ticker: str, buy_date: pd.Timestamp) -> str:
     )
 
 
-def build_buy_day_message(buy_date: pd.Timestamp) -> str:
-    buy_ts = pd.Timestamp(buy_date).normalize()
+def build_buy_day_message(bd: pd.Timestamp) -> str:
+    buy_ts = pd.Timestamp(bd).normalize()
     screen_ts = compute_previous_market_date(buy_ts)
     archive = load_second_screen_archive_for_date(screen_ts)
     if archive.rows.empty:
         return (
-            f"Buy Date: {buy_ts.strftime('%Y-%m-%d')}\n"
+            f"BD: {buy_ts.strftime('%Y-%m-%d')}\n"
             f"Screen Date: {screen_ts.strftime('%Y-%m-%d')}\n"
             "Nessun second_screen_passed disponibile per questa screen date."
         )
 
     sections = [
-        f"Buy Date: {buy_ts.strftime('%Y-%m-%d')}",
+        f"BD: {buy_ts.strftime('%Y-%m-%d')}",
         f"Screen Date: {screen_ts.strftime('%Y-%m-%d')}",
         f"Ticker passati: {len(archive.rows)}",
     ]

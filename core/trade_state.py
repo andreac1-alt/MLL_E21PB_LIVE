@@ -82,7 +82,7 @@ def compute_buy_date_from_screen_date(screen_date: pd.Timestamp) -> pd.Timestamp
         if pd.Timestamp(session_date).normalize() > normalized
     ]
     if not future_sessions:
-        return (normalized + pd.Timedelta(days=1)).normalize()
+        raise ValueError(f"Nessuna BD futura trovata per SD={normalized.date()}.")
     return future_sessions[0]
 
 

@@ -44,7 +44,7 @@ TRADE_SIZING_COLUMNS = [
     "screen_date",
     "buy_date",
     "trade_status",
-    "entry_date",
+    "bd",
     "strategy_id",
     "variant_id",
     "risk_amount",
@@ -200,7 +200,7 @@ def load_momentum_multiplier_by_bd(
             "prev_momentum_5d_top_half": False,
             "momentum_bootstrap_neutral": False,
         }
-    matched = signal_df.loc[signal_df["entry_date"].eq(reference_date)]
+    matched = signal_df.loc[signal_df["bd"].eq(reference_date)]
     if matched.empty:
         return 0.0, {
             "momentum_reference_date": reference_date.strftime("%Y-%m-%d"),
@@ -391,7 +391,7 @@ def apply_sizing_dependent_trade_state_updates(
 
     for idx, row in updated.iterrows():
         status = str(row.get("trade_status", "")).upper()
-        if status != "OPEN" or pd.isna(row.get("entry_date")):
+        if status != "OPEN" or pd.isna(row.get("bd")):
             continue
         trade_id = str(row["trade_id"])
         r_multiplier = float(r_multiplier_by_trade.get(trade_id, 1.0))
@@ -421,24 +421,24 @@ def build_r_multiplier_by_trade(
     existing_lookup: dict[tuple[str, str], float] = {}
     if not positions_existing.empty:
         existing = positions_existing.copy()
-        existing["entry_date"] = pd.to_datetime(existing["entry_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        existing["bd"] = pd.to_datetime(existing["bd"], errors="coerce").dt.strftime("%Y-%m-%d")
         existing["date"] = pd.to_datetime(existing["date"], errors="coerce").dt.normalize()
         existing = existing.loc[existing["date"] < pd.Timestamp(buy_date).normalize()].copy()
         existing = existing.sort_values("date", kind="stable")
         for _, position in existing.iterrows():
-            key = (str(position["ticker"]).upper(), str(position["entry_date"]))
+            key = (str(position["ticker"]).upper(), str(position["bd"]))
             value = pd.to_numeric(position.get("r_multiplier"), errors="coerce")
             existing_lookup[key] = float(value) if pd.notna(value) else 1.0
 
     result: dict[str, float] = {}
     for _, row in current_df.iterrows():
         trade_id = str(row["trade_id"])
-        entry_date = pd.to_datetime(row.get("entry_date"), errors="coerce")
-        if pd.isna(entry_date):
+        bd = pd.to_datetime(row.get("bd"), errors="coerce")
+        if pd.isna(bd):
             result[trade_id] = 1.0
             continue
-        key = (str(row["ticker"]).upper(), pd.Timestamp(entry_date).strftime("%Y-%m-%d"))
-        if pd.Timestamp(entry_date).normalize() < pd.Timestamp(buy_date).normalize() and key in existing_lookup:
+        key = (str(row["ticker"]).upper(), pd.Timestamp(bd).strftime("%Y-%m-%d"))
+        if pd.Timestamp(bd).normalize() < pd.Timestamp(buy_date).normalize() and key in existing_lookup:
             result[trade_id] = existing_lookup[key]
         else:
             pre_etf_r_multiplier = (
@@ -467,11 +467,11 @@ def shares_open_for_status(row: pd.Series, risk_amount: float, r_multiplier: flo
 
 
 def build_position_indexes(current_df: pd.DataFrame) -> dict[str, int]:
-    entered = current_df.loc[current_df["entry_date"].notna()].copy()
+    entered = current_df.loc[current_df["bd"].notna()].copy()
     if entered.empty:
         return {}
-    entered = entered.sort_values(["ticker", "entry_date", "screen_date", "trade_id"])
-    entered["entry_seq"] = entered.groupby(["ticker", "entry_date"]).cumcount() + 1
+    entered = entered.sort_values(["ticker", "bd", "screen_date", "trade_id"])
+    entered["entry_seq"] = entered.groupby(["ticker", "bd"]).cumcount() + 1
     return dict(zip(entered["trade_id"].astype(str), entered["entry_seq"].astype(int)))
 
 
@@ -482,8 +482,8 @@ def position_id_for_row(
     variant_id: str,
     entry_seq: int,
 ) -> str:
-    entry_date = pd.Timestamp(row["entry_date"]).strftime("%Y%m%d")
-    return build_position_id(strategy_id, variant_id, str(row["ticker"]), entry_date, entry_seq)
+    bd = pd.Timestamp(row["bd"]).strftime("%Y%m%d")
+    return build_position_id(strategy_id, variant_id, str(row["ticker"]), bd, entry_seq)
 
 
 def build_positions_for_bd(
@@ -504,7 +504,7 @@ def build_positions_for_bd(
 
     for _, row in current_df.iterrows():
         status = str(row["trade_status"]).upper()
-        if status == "SKIPPED" or pd.isna(row["entry_date"]):
+        if status == "SKIPPED" or pd.isna(row["bd"]):
             continue
         r_multiplier = float(r_multiplier_by_trade.get(str(row["trade_id"]), 1.0))
         quantity = initial_shares(row, risk_amount, r_multiplier)
@@ -515,7 +515,7 @@ def build_positions_for_bd(
         previous_status = ""
         if not previous_lookup.empty and row["trade_id"] in previous_lookup.index:
             previous_status = str(previous_lookup.loc[row["trade_id"], "trade_status"]).upper()
-        opened_today = pd.Timestamp(row["entry_date"]).normalize() == pd.Timestamp(buy_date).normalize()
+        opened_today = pd.Timestamp(row["bd"]).normalize() == pd.Timestamp(buy_date).normalize()
         closed_today = status == "CLOSED" and previous_status != "CLOSED"
         position_status = "CLOSED" if status == "CLOSED" else "OPEN"
         entry_seq = entry_seq_by_trade.get(str(row["trade_id"]), 1)
@@ -548,10 +548,10 @@ def build_positions_for_bd(
                 "variant_id": variant_id,
                 "position_id": position_id,
                 "ticker": str(row["ticker"]).upper(),
-                "entry_date": pd.Timestamp(row["entry_date"]).strftime("%Y-%m-%d"),
+                "bd": pd.Timestamp(row["bd"]).strftime("%Y-%m-%d"),
                 "entry_seq": entry_seq,
                 "r_multiplier": r_multiplier,
-                "days_in_trade": max(1, int((pd.Timestamp(buy_date) - pd.Timestamp(row["entry_date"])).days) + 1),
+                "days_in_trade": max(1, int((pd.Timestamp(buy_date) - pd.Timestamp(row["bd"])).days) + 1),
                 "shares_initial": quantity,
                 "shares_open": shares_open,
                 "realized_r_partial": round(realized_r_partial, 4),
@@ -589,7 +589,7 @@ def append_action(
     ticker: str,
     action_seq: int,
     action_type: str,
-    entry_date: pd.Timestamp,
+    bd: pd.Timestamp,
     shares_delta: int,
     shares_open_after: int,
     realized_r_delta: float,
@@ -606,7 +606,7 @@ def append_action(
             "ticker": ticker,
             "action_seq": action_seq,
             "action_type": action_type,
-            "entry_date": pd.Timestamp(entry_date).strftime("%Y-%m-%d"),
+            "bd": pd.Timestamp(bd).strftime("%Y-%m-%d"),
             "shares_delta": shares_delta,
             "shares_open_after": shares_open_after,
             "realized_r_delta": round(realized_r_delta, 4),
@@ -635,7 +635,7 @@ def build_actions_for_bd(
 
     for _, row in current_df.iterrows():
         status = str(row["trade_status"]).upper()
-        if status == "SKIPPED" or pd.isna(row["entry_date"]):
+        if status == "SKIPPED" or pd.isna(row["bd"]):
             continue
         trade_id = str(row["trade_id"])
         r_multiplier = float(r_multiplier_by_trade.get(trade_id, 1.0))
@@ -652,7 +652,7 @@ def build_actions_for_bd(
             previous_shares_open = shares_open_for_status(previous_row, risk_amount, r_multiplier)
 
         current_shares_open = shares_open_for_status(row, risk_amount, r_multiplier)
-        is_new_entry = not previous_status and pd.Timestamp(row["entry_date"]).normalize() == pd.Timestamp(buy_date).normalize()
+        is_new_entry = not previous_status and pd.Timestamp(row["bd"]).normalize() == pd.Timestamp(buy_date).normalize()
         prior_position_actions = pd.DataFrame()
         if actions_existing is not None and not actions_existing.empty:
             prior_actions = actions_existing.copy()
@@ -684,7 +684,7 @@ def build_actions_for_bd(
                 ticker=ticker,
                 action_seq=action_seq,
                 action_type="BUY",
-                entry_date=row["entry_date"],
+                bd=row["bd"],
                 shares_delta=quantity,
                 shares_open_after=quantity,
                 realized_r_delta=0.0,
@@ -716,7 +716,7 @@ def build_actions_for_bd(
             ticker=ticker,
             action_seq=action_seq,
             action_type=action_type,
-            entry_date=row["entry_date"],
+            bd=row["bd"],
             shares_delta=-sell_shares,
             shares_open_after=current_shares_open,
             realized_r_delta=realized_delta,
@@ -757,8 +757,8 @@ def build_trade_sizing_for_bd(
         breadth_add = float(breadth_add_by_trade.get(trade_id, 0.0))
         etf_multiplier = float(etf_multiplier_by_trade.get(trade_id, ETF_NEUTRAL_MULTIPLIER))
         pre_etf = 1.0 + slope_add + float(momentum_add) + breadth_add
-        entry_date = pd.to_datetime(row.get("entry_date"), errors="coerce")
-        entered = pd.notna(entry_date)
+        bd = pd.to_datetime(row.get("bd"), errors="coerce")
+        entered = pd.notna(bd)
         r_multiplier_final = float(r_multiplier_by_trade.get(trade_id, 1.0)) if entered else 0.0
         shares_initial = initial_shares(row, risk_amount, r_multiplier_final) if entered else 0
         breadth_detail = breadth_detail_by_trade.get(trade_id, {})
@@ -769,7 +769,7 @@ def build_trade_sizing_for_bd(
                 "screen_date": pd.Timestamp(row["screen_date"]).strftime("%Y-%m-%d") if pd.notna(row["screen_date"]) else "",
                 "buy_date": pd.Timestamp(buy_date).strftime("%Y-%m-%d"),
                 "trade_status": str(row["trade_status"]).upper(),
-                "entry_date": pd.Timestamp(entry_date).strftime("%Y-%m-%d") if entered else "",
+                "bd": pd.Timestamp(bd).strftime("%Y-%m-%d") if entered else "",
                 "strategy_id": strategy_id,
                 "variant_id": variant_id,
                 "risk_amount": round(float(risk_amount), 4),
@@ -893,12 +893,12 @@ def save_outputs(
     full_dir.mkdir(parents=True, exist_ok=True)
 
     for filename, df, sort_cols in [
-        ("portfolio_positions_daily.csv", positions_all, ["date", "ticker", "entry_date", "position_id"]),
-        ("portfolio_actions_daily.csv", actions_all, ["action_date", "ticker", "entry_date", "action_seq"]),
+        ("portfolio_positions_daily.csv", positions_all, ["date", "ticker", "bd", "position_id"]),
+        ("portfolio_actions_daily.csv", actions_all, ["action_date", "ticker", "bd", "action_seq"]),
         ("portfolio_state_daily.csv", state_all, ["date"]),
     ]:
         df = df.copy()
-        for date_col in ["date", "action_date", "entry_date"]:
+        for date_col in ["date", "action_date", "bd"]:
             if date_col in df.columns:
                 df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
         path = full_dir / filename

@@ -8,7 +8,11 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from core.config.data_paths import MARKET_DATA_ROOT
-from core.market.semaforo import compute_blue_on_for_date, compute_market_street_light_for_date
+from core.market.semaforo import (
+    compute_blue_on_for_date,
+    compute_market_street_light_for_date,
+    load_daily_history_from_cache,
+)
 from core.portfolio.momentum_signal import load_momentum_signal
 from core.portfolio.etf_context import save_etf_context_for_sd
 from core.trade_console.mobile_service import build_trade_console_payload
@@ -76,6 +80,17 @@ def metric_delta_color(value: bool | None) -> str:
     return "normal" if bool(value) else "inverse"
 
 
+def get_semaphore_style(color: str) -> tuple[str, str, str]:
+    normalized = str(color).strip().upper()
+    palette = {
+        "GREEN": ("rgba(34, 197, 94, 0.18)", "rgba(34, 197, 94, 0.42)", "#166534"),
+        "BLUE": ("rgba(37, 99, 235, 0.16)", "rgba(37, 99, 235, 0.38)", "#1d4ed8"),
+        "YELLOW": ("rgba(245, 158, 11, 0.18)", "rgba(245, 158, 11, 0.38)", "#b45309"),
+        "RED": ("rgba(239, 68, 68, 0.18)", "rgba(239, 68, 68, 0.38)", "#b91c1c"),
+    }
+    return palette.get(normalized, ("rgba(148, 163, 184, 0.16)", "rgba(148, 163, 184, 0.38)", "#475569"))
+
+
 def to_date_series(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, errors="coerce").dt.normalize()
 
@@ -125,12 +140,16 @@ def screening_day_dir(screen_date: pd.Timestamp) -> Path:
 
 def resolve_screening_artifact(screen_date: pd.Timestamp, filename: str) -> Path | None:
     day_dir = screening_day_dir(screen_date)
+    candidates: list[Path] = []
     direct_path = day_dir / filename
     if direct_path.exists():
-        return direct_path
+        candidates.append(direct_path)
 
-    candidates = sorted(day_dir.glob(f"*/{filename}"))
-    return candidates[-1] if candidates else None
+    candidates.extend(day_dir.glob(f"*/{filename}"))
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda path: (path.stat().st_mtime, str(path)))
 
 
 def load_text(path: Path | None) -> str:
@@ -292,7 +311,7 @@ def trade_sizing_path_for_date(buy_date: pd.Timestamp) -> Path:
 
 def render_header(state: pd.DataFrame) -> None:
     st.title("MLL1 E21PB Live")
-    st.caption("Portfolio live trade_state-based. SD = Screen Date, BD = Buy Date.")
+    st.caption("Portfolio live trade_state-based. SD = Screen Date, BD = seduta operativa / data di ingresso.")
     latest_bd = latest_date(state, "date")
     if latest_bd is not None:
         st.success(f"Portfolio aggiornato a BD {latest_bd.strftime('%Y-%m-%d')}")
@@ -780,7 +799,7 @@ def render_portfolio_tab(state: pd.DataFrame, positions: pd.DataFrame, actions: 
         st.markdown("Posizioni aperte ultima BD")
         cols = [
             "ticker",
-            "entry_date",
+            "bd" if "bd" in open_positions.columns else "entry_date",
             "r_multiplier",
             "shares_initial",
             "shares_open",
@@ -821,8 +840,9 @@ def render_operations_tab(actions: pd.DataFrame) -> None:
     operations = actions.copy()
     if "action_date" in operations.columns:
         operations["action_date"] = pd.to_datetime(operations["action_date"], errors="coerce").dt.normalize()
-    if "entry_date" in operations.columns:
-        operations["entry_date"] = pd.to_datetime(operations["entry_date"], errors="coerce").dt.normalize()
+    date_col = "bd" if "bd" in operations.columns else "entry_date" if "entry_date" in operations.columns else None
+    if date_col is not None:
+        operations[date_col] = pd.to_datetime(operations[date_col], errors="coerce").dt.normalize()
     for col in ["action_seq", "shares_delta", "shares_open_after"]:
         if col in operations.columns:
             operations[col] = pd.to_numeric(operations[col], errors="coerce")
@@ -835,17 +855,17 @@ def render_operations_tab(actions: pd.DataFrame) -> None:
         operations = operations.sort_values(sort_cols, ascending=[False] * len(sort_cols), kind="stable")
 
     latest_action_date = latest_date(operations, "action_date")
-    buy_dates_count = 0
+    bd_count = 0
     if "action_type" in operations.columns and "action_date" in operations.columns:
         buy_mask = operations["action_type"].astype(str).str.upper().eq("BUY")
-        buy_dates_count = operations.loc[buy_mask, "action_date"].nunique()
+        bd_count = operations.loc[buy_mask, "action_date"].nunique()
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("Totale operazioni", len(operations))
     metric_col2.metric(
         "Data piu recente",
         "N/D" if latest_action_date is None else latest_action_date.strftime("%Y-%m-%d"),
     )
-    metric_col3.metric("Buy dates", int(buy_dates_count))
+    metric_col3.metric("BD con BUY", int(bd_count))
 
     display_columns = [
         col
@@ -853,7 +873,7 @@ def render_operations_tab(actions: pd.DataFrame) -> None:
             "action_date",
             "ticker",
             "action_type",
-            "entry_date",
+            date_col if date_col is not None else "bd",
             "action_seq",
             "shares_delta",
             "shares_open_after",
@@ -877,98 +897,237 @@ def render_market_tab(state: pd.DataFrame, momentum: pd.DataFrame) -> None:
     semaforo_result = None
     blue_on = None
     blue_on_weak_count = None
+    daily_history = None
     try:
+        daily_history = load_daily_history_from_cache("SPY")
         semaforo_result = compute_market_street_light_for_date(effective_sd)
         blue_on, blue_on_weak_count = compute_blue_on_for_date(effective_sd)
     except Exception as exc:
         st.warning(f"Impossibile calcolare il semaforo di mercato: {exc}")
 
-    market_col1, market_col2, market_col3, market_col4 = st.columns(4)
-    market_col1.metric(
-        "Semaforo",
-        semaforo_result.market_street_light if semaforo_result is not None else "N/D",
-    )
-    market_col2.metric("Blue On", "YES" if blue_on else "NO" if blue_on is not None else "N/D")
-    market_col3.metric(
-        "Blue On weak count",
-        "N/D" if blue_on_weak_count is None else str(blue_on_weak_count),
-    )
-    market_col4.metric("SD", effective_sd.strftime("%Y-%m-%d"))
+    with st.container(border=True):
+        st.markdown("### Semaforo di Mercato")
+        market_col1, market_col2, market_col3, market_col4 = st.columns(4)
+        market_col1.metric(
+            "Semaforo",
+            semaforo_result.market_street_light if semaforo_result is not None else "N/D",
+        )
+        market_col2.metric("Blue On", "YES" if blue_on else "NO" if blue_on is not None else "N/D")
+        market_col3.metric(
+            "Blue On weak count",
+            "N/D" if blue_on_weak_count is None else str(blue_on_weak_count),
+        )
+        market_col4.metric("SD", effective_sd.strftime("%Y-%m-%d"))
+
+        if semaforo_result is not None:
+            rule_col1, rule_col2, rule_col3, rule_col4 = st.columns(4)
+            rule_col1.metric("Rule 5DMA", "YES" if semaforo_result.rule_5dma else "NO")
+            rule_col2.metric("Rule Daily Buy", "YES" if semaforo_result.rule_daily_buy else "NO")
+            rule_col3.metric("Rule Weekly Buy", "YES" if semaforo_result.rule_weekly_buy else "NO")
+            rule_col4.metric("Core score", f"{semaforo_result.core_score}/3")
+
+            price_col1, price_col2, price_col3, price_col4 = st.columns(4)
+            price_col1.metric("Close", f"{semaforo_result.close:.2f}")
+            price_col2.metric("SMA5", f"{semaforo_result.sma5:.2f}")
+            price_col3.metric("SMA10", f"{semaforo_result.sma10:.2f}")
+            price_col4.metric("SMA20", f"{semaforo_result.sma20:.2f}")
 
     if semaforo_result is not None:
-        rule_col1, rule_col2, rule_col3, rule_col4 = st.columns(4)
-        rule_col1.metric("Rule 5DMA", "YES" if semaforo_result.rule_5dma else "NO")
-        rule_col2.metric("Rule Daily Buy", "YES" if semaforo_result.rule_daily_buy else "NO")
-        rule_col3.metric("Rule Weekly Buy", "YES" if semaforo_result.rule_weekly_buy else "NO")
-        rule_col4.metric("Core score", f"{semaforo_result.core_score}/3")
+        with st.container(border=True):
+            st.markdown("### Dettaglio Regole")
+            detail_df = pd.DataFrame(
+                [
+                    {
+                        "rule": "5DMA",
+                        "passed": semaforo_result.rule_5dma,
+                        "registrato": f"{semaforo_result.close:.2f}",
+                        "medie": f"SMA5 {semaforo_result.sma5:.2f}",
+                    },
+                    {
+                        "rule": "Daily Buy",
+                        "passed": semaforo_result.rule_daily_buy,
+                        "registrato": f"{semaforo_result.close:.2f}",
+                        "medie": f"SMA10 {semaforo_result.sma10:.2f} | SMA20 {semaforo_result.sma20:.2f}",
+                    },
+                    {
+                        "rule": "Weekly Buy",
+                        "passed": semaforo_result.rule_weekly_buy,
+                        "registrato": f"{semaforo_result.weekly_close:.2f}",
+                        "medie": (
+                            f"W-SMA10 {semaforo_result.weekly_sma10:.2f} | "
+                            f"W-SMA20 {semaforo_result.weekly_sma20:.2f}"
+                        ),
+                    },
+                ]
+            )
+            st.dataframe(detail_df, width="stretch", hide_index=True)
 
-        price_col1, price_col2, price_col3, price_col4 = st.columns(4)
-        price_col1.metric("Close", f"{semaforo_result.close:.2f}")
-        price_col2.metric("SMA5", f"{semaforo_result.sma5:.2f}")
-        price_col3.metric("SMA10", f"{semaforo_result.sma10:.2f}")
-        price_col4.metric("SMA20", f"{semaforo_result.sma20:.2f}")
+        if daily_history is not None and not daily_history.empty:
+            try:
+                trading_dates = pd.Index(pd.to_datetime(daily_history.index)).sort_values().unique()
+                anchor_candidates = trading_dates[trading_dates <= effective_sd]
+                if len(anchor_candidates) > 0:
+                    anchor_date = pd.Timestamp(anchor_candidates[-1]).normalize()
+                    anchor_idx = trading_dates.get_loc(anchor_date)
+                    start_idx = max(0, anchor_idx - 10)
+                    end_idx = min(len(trading_dates) - 1, anchor_idx + 10)
+                    window_dates = trading_dates[start_idx : end_idx + 1]
+
+                    window_rows: list[dict[str, object]] = []
+                    for dt in window_dates:
+                        window_result = compute_market_street_light_for_date(
+                            pd.Timestamp(dt),
+                            ticker="SPY",
+                            daily_df=daily_history,
+                        )
+                        window_rows.append(
+                            {
+                                "date": pd.Timestamp(dt).strftime("%Y-%m-%d"),
+                                "core_score": window_result.core_score,
+                                "semaforo_color": window_result.market_street_light,
+                                "is_selected": pd.Timestamp(dt).normalize() == anchor_date,
+                            }
+                        )
+
+                    with st.container(border=True):
+                        st.markdown("### Intorno della Data")
+                        st.caption(
+                            "Sequenza del semaforo sulle sedute di mercato: 10 prima e 10 dopo la data effettiva usata dal calcolo."
+                        )
+                        if anchor_date != effective_sd:
+                            st.caption(
+                                f"La data selezionata non e' una seduta di mercato; l'ancora usata e' {anchor_date.strftime('%Y-%m-%d')}."
+                            )
+
+                        cards = []
+                        for row in window_rows:
+                            color = row["semaforo_color"]
+                            bg, border, text = get_semaphore_style(color)
+                            selected_style = (
+                                "box-shadow: 0 0 0 4px rgba(19, 34, 47, 0.14); "
+                                "border-width: 3px; "
+                            ) if row["is_selected"] else ""
+                            selected_label = (
+                                "<div style='font-size:0.72rem; opacity:0.8;'>data selezionata</div>"
+                                if row["is_selected"]
+                                else ""
+                            )
+                            min_width = "138px" if row["is_selected"] else "96px"
+                            padding = "0.9rem 0.95rem" if row["is_selected"] else "0.58rem 0.62rem"
+                            date_font = "0.88rem" if row["is_selected"] else "0.72rem"
+                            color_font = "1.12rem" if row["is_selected"] else "0.9rem"
+                            score_font = "0.84rem" if row["is_selected"] else "0.74rem"
+                            cards.append(
+                                f"""
+                                <div style="
+                                    min-width: {min_width};
+                                    padding: {padding};
+                                    border-radius: 14px;
+                                    border: 1px solid {border};
+                                    background: {bg};
+                                    color: {text};
+                                    {selected_style}
+                                " {'data-selected="true"' if row["is_selected"] else ""}>
+                                    <div style="font-size:{date_font}; font-weight:600;">{row['date']}</div>
+                                    <div style="font-size:{color_font}; font-weight:800; margin-top:0.25rem;">{color}</div>
+                                    <div style="font-size:{score_font}; margin-top:0.2rem;">score {row['core_score']}/3</div>
+                                    {selected_label}
+                                </div>
+                                """
+                            )
+
+                        components.html(
+                            f"""
+                            <div id="semaphore-strip" style="
+                                display:flex;
+                                gap:0.7rem;
+                                overflow-x:auto;
+                                padding:0.25rem 0 0.5rem 0;
+                                background: transparent;
+                            ">
+                                {''.join(cards)}
+                            </div>
+                            <script>
+                            const strip = document.getElementById("semaphore-strip");
+                            const selected = strip ? strip.querySelector('[data-selected="true"]') : null;
+                            if (strip && selected) {{
+                                const targetLeft =
+                                    selected.offsetLeft - (strip.clientWidth / 2) + (selected.clientWidth / 2);
+                                strip.scrollLeft = Math.max(0, targetLeft);
+                            }}
+                            </script>
+                            """,
+                            height=190,
+                            scrolling=True,
+                        )
+
+                        table_df = pd.DataFrame(window_rows).rename(columns={"is_selected": "selected_date"})
+                        st.dataframe(table_df, width="stretch", hide_index=True)
+            except Exception as exc:
+                st.caption(f"Intorno della Data non disponibile: {exc}")
 
     breadth_history_df = load_breadth_history()
     breadth_row = pd.DataFrame()
     if not breadth_history_df.empty and "effective_date" in breadth_history_df.columns:
         breadth_row = breadth_history_df.loc[breadth_history_df["effective_date"] == effective_sd].tail(1)
 
-    st.markdown("### Breadth")
-    if breadth_row.empty:
-        st.info("Nessun dato breadth salvato per questa SD.")
-    else:
-        breadth = breadth_row.iloc[-1]
-        breadth_col1, breadth_col2, breadth_col3, breadth_col4 = st.columns(4)
-        breadth_col1.metric("Breadth > SMA20", f"{float(breadth.get('above_sma20_pct', 0.0)):.2f}%")
-        breadth_col2.metric("Breadth > SMA5", f"{float(breadth.get('above_sma5_pct', 0.0)):.2f}%")
-        breadth_col3.metric(
-            "Valid SMA20 / Universe",
-            f"{int(breadth.get('valid_sma20_count', 0) or 0)}/{int(breadth.get('universe_total', 0) or 0)}",
-        )
-        breadth_col4.metric(
-            "P20 / P10",
-            f"{float(breadth.get('above_sma20_pct_p20', 0.0)):.2f}% / {float(breadth.get('above_sma20_pct_p10', 0.0)):.2f}%",
-        )
-        st.caption(
-            f"SMA20: {int(breadth.get('above_sma20_count', 0) or 0)}/{int(breadth.get('valid_sma20_count', 0) or 0)} ticker sopra media, "
-            f"SMA5: {int(breadth.get('above_sma5_count', 0) or 0)}/{int(breadth.get('valid_sma5_count', 0) or 0)}. "
-            f"Mancanti: SMA20 {int(breadth.get('missing_sma20_count', 0) or 0)}, "
-            f"SMA5 {int(breadth.get('missing_sma5_count', 0) or 0)}."
-        )
+    with st.container(border=True):
+        st.markdown("### Breadth")
+        if breadth_row.empty:
+            st.info("Nessun dato breadth salvato per questa SD.")
+        else:
+            breadth = breadth_row.iloc[-1]
+            breadth_col1, breadth_col2, breadth_col3, breadth_col4 = st.columns(4)
+            breadth_col1.metric("Breadth > SMA20", f"{float(breadth.get('above_sma20_pct', 0.0)):.2f}%")
+            breadth_col2.metric("Breadth > SMA5", f"{float(breadth.get('above_sma5_pct', 0.0)):.2f}%")
+            breadth_col3.metric(
+                "Valid SMA20 / Universe",
+                f"{int(breadth.get('valid_sma20_count', 0) or 0)}/{int(breadth.get('universe_total', 0) or 0)}",
+            )
+            breadth_col4.metric(
+                "P20 / P10",
+                f"{float(breadth.get('above_sma20_pct_p20', 0.0)):.2f}% / {float(breadth.get('above_sma20_pct_p10', 0.0)):.2f}%",
+            )
+            st.caption(
+                f"SMA20: {int(breadth.get('above_sma20_count', 0) or 0)}/{int(breadth.get('valid_sma20_count', 0) or 0)} ticker sopra media, "
+                f"SMA5: {int(breadth.get('above_sma5_count', 0) or 0)}/{int(breadth.get('valid_sma5_count', 0) or 0)}. "
+                f"Mancanti: SMA20 {int(breadth.get('missing_sma20_count', 0) or 0)}, "
+                f"SMA5 {int(breadth.get('missing_sma5_count', 0) or 0)}."
+            )
 
-        chart_df = breadth_history_df.loc[breadth_history_df["effective_date"] <= effective_sd].copy()
-        if not chart_df.empty:
-            chart_df = chart_df[["effective_date", "above_sma20_pct", "above_sma5_pct"]].tail(120)
-            plot_df = chart_df.melt(
-                id_vars=["effective_date"],
-                value_vars=["above_sma20_pct", "above_sma5_pct"],
-                var_name="serie",
-                value_name="value",
-            )
-            chart = (
-                alt.Chart(plot_df)
-                .mark_line()
-                .encode(
-                    x=alt.X("effective_date:T", title=None),
-                    y=alt.Y("value:Q", title="% breadth"),
-                    color=alt.Color(
-                        "serie:N",
-                        scale=alt.Scale(
-                            domain=["above_sma20_pct", "above_sma5_pct"],
-                            range=["#2563eb", "#f59e0b"],
-                        ),
-                        title=None,
-                    ),
-                    tooltip=[
-                        alt.Tooltip("effective_date:T", title="Data"),
-                        alt.Tooltip("serie:N", title="Serie"),
-                        alt.Tooltip("value:Q", title="Valore", format=".2f"),
-                    ],
+            chart_df = breadth_history_df.loc[breadth_history_df["effective_date"] <= effective_sd].copy()
+            if not chart_df.empty:
+                chart_df = chart_df[["effective_date", "above_sma20_pct", "above_sma5_pct"]].tail(120)
+                plot_df = chart_df.melt(
+                    id_vars=["effective_date"],
+                    value_vars=["above_sma20_pct", "above_sma5_pct"],
+                    var_name="serie",
+                    value_name="value",
                 )
-                .properties(height=320)
-            )
-            st.caption("Andamento storico della breadth dell'universo operativo fino alla SD selezionata.")
-            st.altair_chart(chart, use_container_width=True)
+                chart = (
+                    alt.Chart(plot_df)
+                    .mark_line()
+                    .encode(
+                        x=alt.X("effective_date:T", title=None),
+                        y=alt.Y("value:Q", title="% breadth"),
+                        color=alt.Color(
+                            "serie:N",
+                            scale=alt.Scale(
+                                domain=["above_sma20_pct", "above_sma5_pct"],
+                                range=["#2563eb", "#f59e0b"],
+                            ),
+                            title=None,
+                        ),
+                        tooltip=[
+                            alt.Tooltip("effective_date:T", title="Data"),
+                            alt.Tooltip("serie:N", title="Serie"),
+                            alt.Tooltip("value:Q", title="Valore", format=".2f"),
+                        ],
+                    )
+                    .properties(height=320)
+                )
+                st.caption("Andamento storico della breadth dell'universo operativo fino alla SD selezionata.")
+                st.altair_chart(chart, use_container_width=True)
 
     latest_bd = latest_date(state, "date")
     suggested_sd = first_missing_screen_date(latest_bd)
@@ -1018,11 +1177,8 @@ def render_trade_console_tab() -> None:
     payload_preview = build_trade_console_payload("SPY", selected_sd) if False else None
     meta_col1, meta_col2, meta_col3 = st.columns(3)
     meta_col1.metric("Screen Date", selected_sd.strftime("%Y-%m-%d"))
-    if not second_screen_df.empty and "effective_target_date" in second_screen_df.columns:
-        buy_hint = pd.Timestamp(selected_sd).normalize() + pd.Timedelta(days=1)
-    else:
-        buy_hint = pd.Timestamp(selected_sd).normalize() + pd.Timedelta(days=1)
-    meta_col2.metric("Requested Buy Date", buy_hint.strftime("%Y-%m-%d"))
+    buy_hint = next_market_session(pd.Timestamp(selected_sd).normalize()) or pd.Timestamp(selected_sd).normalize()
+    meta_col2.metric("BD", buy_hint.strftime("%Y-%m-%d"))
     meta_col3.metric("Ticker in watchlist", int(len(second_screen_df)))
 
     ticker_source_options = ["Ticker discrezionale"]
@@ -1069,7 +1225,7 @@ def render_trade_console_tab() -> None:
         return
 
     console = build_trade_console_payload(ticker_input, selected_sd, second_screen_row=selected_row)
-    requested_buy_date = pd.Timestamp(console["requested_buy_date"]).normalize()
+    bd = pd.Timestamp(console["bd"]).normalize()
     breadth_history = load_breadth_history()
     price_snapshot = console.get("price_snapshot", {})
     analysis_row = console.get("analysis_row") or {}
@@ -1164,10 +1320,10 @@ def render_trade_console_tab() -> None:
 
     momentum_value = None
     momentum_qualified = None
-    momentum_reference_date = previous_market_session(previous_market_session(requested_buy_date) or requested_buy_date)
+    momentum_reference_date = previous_market_session(previous_market_session(bd) or bd)
     momentum_signal_df = load_momentum_signal(DEFAULT_STRATEGY_ID, DEFAULT_VARIANT_ID, layer="live")
     if momentum_reference_date is not None and not momentum_signal_df.empty:
-        momentum_row = momentum_signal_df.loc[momentum_signal_df["entry_date"] == momentum_reference_date].tail(1)
+        momentum_row = momentum_signal_df.loc[momentum_signal_df["bd"] == momentum_reference_date].tail(1)
         if not momentum_row.empty:
             raw_momentum_value = pd.to_numeric(momentum_row.iloc[-1].get("prev_momentum_5d_sum"), errors="coerce")
             if pd.notna(raw_momentum_value):
@@ -1311,7 +1467,7 @@ def render_trade_console_tab() -> None:
             )
             total_initial_risk = risk_per_share * adjusted_quantity
             trade_col1, trade_col2, trade_col3, trade_col4, trade_col5, trade_col6 = st.columns(6)
-            trade_col1.metric("Effective Buy Date", pd.Timestamp(trade_result.buy_date).strftime("%Y-%m-%d"))
+            trade_col1.metric("BD", pd.Timestamp(trade_result.buy_date).strftime("%Y-%m-%d"))
             trade_col2.metric("Entry Type", entry_type)
             trade_col3.metric("Entry", f"{float(trade_result.entry_price):.2f}")
             trade_col4.metric("Initial SL", f"{float(trade_result.initial_stop_loss):.2f}")
@@ -1352,7 +1508,7 @@ def render_trade_console_tab() -> None:
             )
             total_initial_risk = estimated_risk_per_share * adjusted_quantity
             est_col1, est_col2, est_col3, est_col4, est_col5, est_col6 = st.columns(6)
-            est_col1.metric("Estimated Buy Date", requested_buy_date.strftime("%Y-%m-%d"))
+            est_col1.metric("BD stimata", bd.strftime("%Y-%m-%d"))
             est_col2.metric("Entry Type", entry_type)
             est_col3.metric("Entry stimata", f"{estimated_entry:.2f}")
             est_col4.metric("SL stimato", f"{estimated_stop:.2f}")
@@ -1445,13 +1601,325 @@ def render_trade_console_tab() -> None:
     )
 
 
+
+def _resolve_bd_column(df: pd.DataFrame) -> str | None:
+    if df.empty:
+        return None
+    if "bd" in df.columns:
+        return "bd"
+    if "entry_date" in df.columns:
+        return "entry_date"
+    return None
+
+
+def load_trade_state_df_for_latest_bd(state: pd.DataFrame) -> pd.DataFrame:
+    latest_bd = latest_date(state, "date")
+    if latest_bd is None:
+        return pd.DataFrame()
+    path = trade_state_path_for_date(latest_bd)
+    if not path.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(path, keep_default_na=False)
+    if df.empty:
+        return df
+    for col in ["screen_date", "buy_date", "entry_date", "bars_seen_until", "last_update_date"]:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce").dt.normalize()
+    for col in ["entry_price", "initial_stop_loss", "current_stop_loss", "target_close_price"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    for col in ["first_take_profit_done", "second_exit_done"]:
+        if col in df.columns:
+            df[col] = df[col].fillna(False).astype(bool)
+    if "ticker" in df.columns:
+        df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
+    return df
+
+
+def build_closed_positions_summary(positions: pd.DataFrame, actions: pd.DataFrame, state: pd.DataFrame) -> pd.DataFrame:
+    if positions.empty or actions.empty:
+        return pd.DataFrame()
+
+    positions_df = positions.copy()
+    actions_df = actions.copy()
+    positions_bd_col = _resolve_bd_column(positions_df)
+    actions_bd_col = _resolve_bd_column(actions_df)
+    if positions_bd_col is None or actions_bd_col is None:
+        return pd.DataFrame()
+
+    positions_df[positions_bd_col] = pd.to_datetime(positions_df[positions_bd_col], errors="coerce").dt.normalize()
+    positions_df["date"] = pd.to_datetime(positions_df["date"], errors="coerce").dt.normalize()
+    actions_df[actions_bd_col] = pd.to_datetime(actions_df[actions_bd_col], errors="coerce").dt.normalize()
+    actions_df["action_date"] = pd.to_datetime(actions_df["action_date"], errors="coerce").dt.normalize()
+    actions_df["shares_open_after"] = pd.to_numeric(actions_df.get("shares_open_after"), errors="coerce")
+    actions_df["realized_r_delta"] = pd.to_numeric(actions_df.get("realized_r_delta"), errors="coerce")
+    actions_df["realized_r_cum_position"] = pd.to_numeric(actions_df.get("realized_r_cum_position"), errors="coerce")
+    if "ticker" in positions_df.columns:
+        positions_df["ticker"] = positions_df["ticker"].astype(str).str.strip().str.upper()
+    if "ticker" in actions_df.columns:
+        actions_df["ticker"] = actions_df["ticker"].astype(str).str.strip().str.upper()
+
+    position_static = (
+        positions_df.sort_values(["date", "position_id"])
+        .groupby("position_id", dropna=False)
+        .agg(
+            ticker=("ticker", "last"),
+            bd=(positions_bd_col, "min"),
+            entry_seq=("entry_seq", "last"),
+            r_multiplier=("r_multiplier", "last"),
+            shares_initial=("shares_initial", "max"),
+        )
+        .reset_index()
+    )
+
+    close_actions = actions_df.loc[
+        actions_df["action_type"].astype(str).str.upper().str.startswith("SELL")
+        & (actions_df["shares_open_after"].fillna(-1) == 0)
+    ].copy()
+    if close_actions.empty:
+        return pd.DataFrame()
+
+    close_summary = (
+        close_actions.sort_values(["action_date", "action_seq", "position_id"])
+        .groupby("position_id", dropna=False)
+        .agg(
+            close_date=("action_date", "last"),
+            realized_r_total=("realized_r_cum_position", "last"),
+            close_action_type=("action_type", "last"),
+            close_note=("note", "last"),
+        )
+        .reset_index()
+    )
+
+    partial_summary = (
+        actions_df.loc[actions_df["action_type"].astype(str).str.upper().eq("SELL_PARTIAL_1")]
+        .groupby("position_id", dropna=False)
+        .size()
+        .reset_index(name="partial_count")
+    )
+
+    summary = close_summary.merge(position_static, on="position_id", how="left")
+    summary = summary.merge(partial_summary, on="position_id", how="left")
+    summary["partial_count"] = pd.to_numeric(summary.get("partial_count"), errors="coerce").fillna(0).astype(int)
+    summary["holding_days"] = (summary["close_date"] - summary["bd"]).dt.days.add(1)
+    summary["outcome"] = "breakeven"
+    summary.loc[summary["realized_r_total"] > 0, "outcome"] = "win"
+    summary.loc[summary["realized_r_total"] < 0, "outcome"] = "loss"
+
+    trade_state_df = load_trade_state_df_for_latest_bd(state)
+    if not trade_state_df.empty:
+        trade_state_df["buy_date"] = pd.to_datetime(trade_state_df.get("buy_date"), errors="coerce").dt.normalize()
+        trade_state_df = trade_state_df.sort_values(["ticker", "buy_date", "trade_id"]).copy()
+        trade_state_df["bd_rank"] = trade_state_df.groupby(["ticker", "buy_date"]).cumcount() + 1
+        summary = summary.sort_values(["ticker", "bd", "position_id"]).copy()
+        summary["bd_rank"] = summary.groupby(["ticker", "bd"]).cumcount() + 1
+        context_cols = [
+            col for col in [
+                "trade_id", "screen_date", "trade_status", "close_reason",
+                "entry_mode", "first_take_profit_done", "second_exit_done",
+            ] if col in trade_state_df.columns
+        ]
+        summary = summary.merge(
+            trade_state_df[["ticker", "buy_date", "bd_rank", *context_cols]],
+            left_on=["ticker", "bd", "bd_rank"],
+            right_on=["ticker", "buy_date", "bd_rank"],
+            how="left",
+        )
+        if "buy_date" in summary.columns:
+            summary = summary.drop(columns=["buy_date"])
+
+    etf_rows = []
+    unique_screen_dates = sorted(pd.to_datetime(summary.get("screen_date"), errors="coerce").dropna().unique().tolist())
+    for screen_date in unique_screen_dates:
+        ctx_path = etf_context_path_for_date(pd.Timestamp(screen_date))
+        if not ctx_path.exists():
+            continue
+        ctx_df = pd.read_csv(ctx_path, keep_default_na=False)
+        if ctx_df.empty or "ticker" not in ctx_df.columns:
+            continue
+        ctx_df["screen_date"] = pd.to_datetime(ctx_df.get("screen_date"), errors="coerce").dt.normalize()
+        ctx_df["ticker"] = ctx_df["ticker"].astype(str).str.strip().str.upper()
+        etf_rows.append(ctx_df)
+    if etf_rows:
+        etf_df = pd.concat(etf_rows, ignore_index=True)
+        keep_cols = [c for c in ["screen_date", "ticker", "recommended", "context_score", "reference_etf_percentile"] if c in etf_df.columns]
+        summary = summary.merge(etf_df[keep_cols].drop_duplicates(subset=["screen_date", "ticker"]), on=["screen_date", "ticker"], how="left")
+
+    slope_rows = []
+    for screen_date in unique_screen_dates:
+        archive = load_screening_day_bundle(pd.Timestamp(screen_date))
+        second_df = archive.get("second_passed_df")
+        if second_df is None or second_df.empty or "ticker" not in second_df.columns:
+            continue
+        second_df = second_df.copy()
+        second_df["ticker"] = second_df["ticker"].astype(str).str.strip().str.upper()
+        second_df["screen_date"] = pd.Timestamp(screen_date)
+        cols = [c for c in ["screen_date", "ticker", "ema21_slope_pct_5", "second_screen_rank"] if c in second_df.columns]
+        slope_rows.append(second_df[cols])
+    if slope_rows:
+        slope_df = pd.concat(slope_rows, ignore_index=True)
+        summary = summary.merge(slope_df.drop_duplicates(subset=["screen_date", "ticker"]), on=["screen_date", "ticker"], how="left")
+
+    summary = summary.sort_values(["bd", "close_date", "ticker", "position_id"]).reset_index(drop=True)
+    return summary
+
+
+def _summarize_closed_trades(closed_df: pd.DataFrame) -> dict[str, object]:
+    if closed_df.empty:
+        return {
+            "trades": 0, "wins": 0, "losses": 0, "breakeven": 0, "win_rate": None,
+            "realized_r_total": 0.0, "expectancy_r": None, "avg_win_r": None, "avg_loss_r": None,
+            "best_trade_r": None, "worst_trade_r": None, "avg_holding_days": None,
+        }
+    wins = closed_df.loc[closed_df["outcome"] == "win"]
+    losses = closed_df.loc[closed_df["outcome"] == "loss"]
+    breakeven = closed_df.loc[closed_df["outcome"] == "breakeven"]
+    decision_count = len(wins) + len(losses)
+    return {
+        "trades": len(closed_df),
+        "wins": len(wins),
+        "losses": len(losses),
+        "breakeven": len(breakeven),
+        "win_rate": (len(wins) / decision_count) if decision_count else None,
+        "realized_r_total": float(pd.to_numeric(closed_df["realized_r_total"], errors="coerce").fillna(0).sum()),
+        "expectancy_r": float(pd.to_numeric(closed_df["realized_r_total"], errors="coerce").fillna(0).mean()) if len(closed_df) else None,
+        "avg_win_r": float(pd.to_numeric(wins["realized_r_total"], errors="coerce").mean()) if len(wins) else None,
+        "avg_loss_r": float(pd.to_numeric(losses["realized_r_total"], errors="coerce").mean()) if len(losses) else None,
+        "best_trade_r": float(pd.to_numeric(closed_df["realized_r_total"], errors="coerce").max()) if len(closed_df) else None,
+        "worst_trade_r": float(pd.to_numeric(closed_df["realized_r_total"], errors="coerce").min()) if len(closed_df) else None,
+        "avg_holding_days": float(pd.to_numeric(closed_df["holding_days"], errors="coerce").mean()) if len(closed_df) else None,
+    }
+
+
+def render_closed_trade_summary(summary: dict[str, object], *, prefix: str = "") -> None:
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric(f"{prefix}Trade chiusi".strip(), int(summary["trades"]))
+    col2.metric("Win rate", "N/D" if summary["win_rate"] is None else f"{summary['win_rate'] * 100:.2f}%")
+    col3.metric("Realized R", f"{summary['realized_r_total']:.4f}")
+    col4.metric("Expectancy R", "N/D" if summary["expectancy_r"] is None else f"{summary['expectancy_r']:.4f}")
+    col5.metric("Avg Holding", "N/D" if summary["avg_holding_days"] is None else f"{summary['avg_holding_days']:.1f}")
+    col6, col7, col8, col9 = st.columns(4)
+    col6.metric("Wins", int(summary["wins"]))
+    col7.metric("Losses", int(summary["losses"]))
+    col8.metric("Best R", "N/D" if summary["best_trade_r"] is None else f"{summary['best_trade_r']:.4f}")
+    col9.metric("Worst R", "N/D" if summary["worst_trade_r"] is None else f"{summary['worst_trade_r']:.4f}")
+
+
+def render_month_tab(closed_df: pd.DataFrame) -> None:
+    st.subheader("Mese")
+    st.caption("Trade chiusi attribuiti alla BD del trade.")
+    if closed_df.empty:
+        st.warning("Nessun trade chiuso disponibile.")
+        return
+    available_months = sorted(closed_df["bd"].dropna().dt.strftime("%Y-%m").unique().tolist(), reverse=True)
+    selected_month = st.selectbox("Mese BD", options=available_months, index=0, key="month_tab_month")
+    scoped = closed_df.loc[closed_df["bd"].dt.strftime("%Y-%m") == selected_month].copy()
+    render_closed_trade_summary(_summarize_closed_trades(scoped), prefix=f"{selected_month} ")
+    st.dataframe(
+        scoped[[c for c in ["bd", "close_date", "ticker", "realized_r_total", "outcome", "holding_days", "r_multiplier", "close_reason"] if c in scoped.columns]],
+        width="stretch",
+        hide_index=True,
+    )
+
+
+def render_year_tab(closed_df: pd.DataFrame) -> None:
+    st.subheader("Anno")
+    st.caption("Trade chiusi attribuiti alla BD del trade.")
+    if closed_df.empty:
+        st.warning("Nessun trade chiuso disponibile.")
+        return
+    available_years = sorted(closed_df["bd"].dropna().dt.year.unique().tolist(), reverse=True)
+    selected_year = st.selectbox("Anno BD", options=available_years, index=0, key="year_tab_year")
+    scoped = closed_df.loc[closed_df["bd"].dt.year == int(selected_year)].copy()
+    render_closed_trade_summary(_summarize_closed_trades(scoped), prefix=f"{selected_year} ")
+    st.dataframe(
+        scoped[[c for c in ["bd", "close_date", "ticker", "realized_r_total", "outcome", "holding_days", "r_multiplier", "close_reason"] if c in scoped.columns]],
+        width="stretch",
+        hide_index=True,
+    )
+
+
+def render_consuntivo_tab(closed_df: pd.DataFrame) -> None:
+    st.subheader("Consuntivo")
+    st.caption("Aggregato mensile dei trade chiusi, per mese di BD.")
+    if closed_df.empty:
+        st.warning("Nessun trade chiuso disponibile.")
+        return
+    working = closed_df.copy()
+    working["month"] = working["bd"].dt.strftime("%Y-%m")
+    rows = []
+    for month, group in working.groupby("month", dropna=False):
+        summary = _summarize_closed_trades(group)
+        rows.append({
+            "month": month,
+            **summary,
+        })
+    cons_df = pd.DataFrame(rows).sort_values("month", ascending=False).reset_index(drop=True)
+    st.dataframe(cons_df, width="stretch", hide_index=True)
+
+
+def render_balance_tab(state: pd.DataFrame) -> None:
+    st.subheader("Balance")
+    st.caption("Curva portfolio in R sulla timeline BD.")
+    if state.empty:
+        st.warning("Nessun portfolio_state_daily.csv disponibile.")
+        return
+    working = state.copy()
+    working["date"] = pd.to_datetime(working["date"], errors="coerce").dt.normalize()
+    for col in ["equity_mtm_r", "realized_r_cum", "unrealized_r", "drawdown_mtm_r", "open_positions_count"]:
+        if col in working.columns:
+            working[col] = pd.to_numeric(working[col], errors="coerce")
+    latest = working.sort_values("date").iloc[-1]
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Ultima BD", latest["date"].strftime("%Y-%m-%d") if pd.notna(latest["date"]) else "N/D")
+    col2.metric("Equity MTM R", f"{latest.get('equity_mtm_r', 0.0):.4f}")
+    col3.metric("Realized R", f"{latest.get('realized_r_cum', 0.0):.4f}")
+    col4.metric("Drawdown MTM R", f"{latest.get('drawdown_mtm_r', 0.0):.4f}")
+    st.line_chart(working.set_index("date")[[c for c in ["equity_mtm_r", "realized_r_cum", "drawdown_mtm_r"] if c in working.columns]])
+    st.dataframe(working.tail(30), width="stretch", hide_index=True)
+
+
+def render_entry_context_tab(closed_df: pd.DataFrame) -> None:
+    st.subheader("Entry Context")
+    st.caption("Trade chiusi, classificazione causale del contesto su screen date.")
+    if closed_df.empty:
+        st.warning("Nessun trade chiuso disponibile.")
+        return
+    metric_option = st.selectbox(
+        "Metrica contesto",
+        options=[opt for opt in ["recommended", "context_score", "reference_etf_percentile", "ema21_slope_pct_5"] if opt in closed_df.columns],
+        index=0,
+        key="entry_context_metric",
+    )
+    scoped = closed_df.loc[closed_df[metric_option].notna()].copy()
+    if scoped.empty:
+        st.info("Nessun dato disponibile per la metrica selezionata.")
+        return
+    if metric_option == "recommended":
+        scoped["bucket"] = scoped[metric_option].astype(str)
+    else:
+        scoped["bucket"] = pd.qcut(pd.to_numeric(scoped[metric_option], errors="coerce"), q=min(4, scoped[metric_option].nunique()), duplicates="drop").astype(str)
+    rows = []
+    for bucket, group in scoped.groupby("bucket", dropna=False):
+        summary = _summarize_closed_trades(group)
+        rows.append({"bucket": bucket, **summary})
+    bucket_df = pd.DataFrame(rows).sort_values("bucket").reset_index(drop=True)
+    st.dataframe(bucket_df, width="stretch", hide_index=True)
+    st.dataframe(
+        scoped[[c for c in ["screen_date", "bd", "close_date", "ticker", metric_option, "realized_r_total", "outcome", "close_reason"] if c in scoped.columns]],
+        width="stretch",
+        hide_index=True,
+    )
+
 def main() -> None:
     configure_page()
     state, positions, actions, momentum = load_live_data()
     render_header(state)
 
-    overview_tab, market_tab, first_screen_tab, second_screen_tab, portfolio_tab, operations_tab, trade_console_tab = st.tabs(
-        ["Overview", "Market", "First Screen", "Second Screen", "Portfolio", "Operazioni", "Trade Console"]
+    closed_df = build_closed_positions_summary(positions, actions, state)
+
+    overview_tab, market_tab, first_screen_tab, second_screen_tab, portfolio_tab, month_tab, year_tab, consuntivo_tab, balance_tab, entry_context_tab, operations_tab, trade_console_tab = st.tabs(
+        ["Overview", "Market", "First Screen", "Second Screen", "Portfolio", "Mese", "Anno", "Consuntivo", "Balance", "Entry Context", "Operazioni", "Trade Console"]
     )
     with overview_tab:
         render_overview_tab(state)
@@ -1463,6 +1931,16 @@ def main() -> None:
         render_second_screen_tab()
     with portfolio_tab:
         render_portfolio_tab(state, positions, actions)
+    with month_tab:
+        render_month_tab(closed_df)
+    with year_tab:
+        render_year_tab(closed_df)
+    with consuntivo_tab:
+        render_consuntivo_tab(closed_df)
+    with balance_tab:
+        render_balance_tab(state)
+    with entry_context_tab:
+        render_entry_context_tab(closed_df)
     with operations_tab:
         render_operations_tab(actions)
     with trade_console_tab:

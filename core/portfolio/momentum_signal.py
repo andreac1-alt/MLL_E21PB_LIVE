@@ -13,7 +13,7 @@ MOMENTUM_WINDOW = 5
 LAG_DAYS = 2
 
 MOMENTUM_SIGNAL_COLUMNS = [
-    "entry_date",
+    "bd",
     "prev_momentum_5d_sum",
     "prev_momentum_5d_bucket",
     "prev_momentum_5d_top_half",
@@ -37,11 +37,11 @@ def load_momentum_signal(strategy_id: str, variant_id: str, *, layer: str = "liv
     if df.empty:
         return empty_momentum_signal_df()
     df = df.reindex(columns=MOMENTUM_SIGNAL_COLUMNS)
-    df["entry_date"] = pd.to_datetime(df["entry_date"], errors="coerce").dt.normalize()
+    df["bd"] = pd.to_datetime(df["bd"], errors="coerce").dt.normalize()
     df["prev_momentum_5d_sum"] = pd.to_numeric(df["prev_momentum_5d_sum"], errors="coerce")
     df["prev_momentum_5d_top_half"] = df["prev_momentum_5d_top_half"].fillna(False).astype(bool)
     df["bootstrap_neutral"] = df["bootstrap_neutral"].fillna(False).astype(bool)
-    return df.dropna(subset=["entry_date"]).sort_values("entry_date", kind="stable").reset_index(drop=True)
+    return df.dropna(subset=["bd"]).sort_values("bd", kind="stable").reset_index(drop=True)
 
 
 def assign_expanding_bucket(values: pd.Series) -> pd.Series:
@@ -74,9 +74,9 @@ def build_momentum_signal_df(state_df: pd.DataFrame) -> pd.DataFrame:
     if state_df.empty:
         return empty_momentum_signal_df()
     result = state_df.copy()
-    result["entry_date"] = pd.to_datetime(result["date"], errors="coerce").dt.normalize()
+    result["bd"] = pd.to_datetime(result["date"], errors="coerce").dt.normalize()
     result["portfolio_mtm_r_day"] = pd.to_numeric(result["mtm_r_day"], errors="coerce").fillna(0.0)
-    result = result.dropna(subset=["entry_date"]).sort_values("entry_date", kind="stable").reset_index(drop=True)
+    result = result.dropna(subset=["bd"]).sort_values("bd", kind="stable").reset_index(drop=True)
     result["bootstrap_neutral"] = result.index < BOOTSTRAP_TRADING_DAYS
     result["prev_momentum_5d_sum"] = (
         result["portfolio_mtm_r_day"]
@@ -104,6 +104,6 @@ def save_momentum_signal(
     path.parent.mkdir(parents=True, exist_ok=True)
     output = signal_df.copy()
     if not output.empty:
-        output["entry_date"] = pd.to_datetime(output["entry_date"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+        output["bd"] = pd.to_datetime(output["bd"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
     output.to_csv(path, index=False)
     return path

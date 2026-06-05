@@ -39,8 +39,11 @@ def load_trade_lifecycle_df(
     df = pd.read_csv(path)
     if df.empty:
         return df
-    for col in ["date", "entry_date"]:
-        df[col] = pd.to_datetime(df[col], errors="coerce").dt.normalize()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
+    bd_source_col = "bd" if "bd" in df.columns else "entry_date" if "entry_date" in df.columns else None
+    if bd_source_col is None:
+        raise KeyError("Trade lifecycle privo di colonna BD/entry_date.")
+    df["bd"] = pd.to_datetime(df[bd_source_col], errors="coerce").dt.normalize()
     numeric_cols = [
         "trade_index",
         "total_entry_shares",
@@ -53,7 +56,7 @@ def load_trade_lifecycle_df(
     ]
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df.dropna(subset=["date", "entry_date", "ticker", "source_event_id"]).copy()
+    return df.dropna(subset=["date", "bd", "ticker", "source_event_id"]).copy()
 
 
 def load_positions_df(strategy_id: str, variant_id: str, *, layer: str = "live") -> pd.DataFrame:
@@ -66,12 +69,15 @@ def load_positions_df(strategy_id: str, variant_id: str, *, layer: str = "live")
     df = pd.read_csv(path)
     if df.empty:
         return df
-    for col in ["date", "entry_date"]:
-        df[col] = pd.to_datetime(df[col], errors="coerce").dt.normalize()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
+    bd_source_col = "bd" if "bd" in df.columns else "entry_date" if "entry_date" in df.columns else None
+    if bd_source_col is None:
+        raise KeyError("Portfolio positions privo di colonna BD/entry_date.")
+    df["bd"] = pd.to_datetime(df[bd_source_col], errors="coerce").dt.normalize()
     df["entry_seq"] = pd.to_numeric(df["entry_seq"], errors="coerce").fillna(0).astype(int)
     df["r_multiplier"] = pd.to_numeric(df.get("r_multiplier", 1.0), errors="coerce").fillna(1.0)
     df["shares_open"] = pd.to_numeric(df["shares_open"], errors="coerce").fillna(0).astype(int)
-    return df.dropna(subset=["date", "entry_date", "ticker", "position_id"]).copy()
+    return df.dropna(subset=["date", "bd", "ticker", "position_id"]).copy()
 
 
 def build_position_index_from_positions(
@@ -81,29 +87,29 @@ def build_position_index_from_positions(
 ) -> pd.DataFrame:
     entry_rows = positions_df[positions_df["opened_today"] == True].copy()
     entry_rows["ticker"] = entry_rows["ticker"].astype(str).str.upper()
-    entry_rows["entry_date"] = pd.to_datetime(entry_rows["entry_date"], errors="coerce").dt.normalize()
+    entry_rows["bd"] = pd.to_datetime(entry_rows["bd"], errors="coerce").dt.normalize()
     entry_rows["entry_seq"] = pd.to_numeric(entry_rows["entry_seq"], errors="coerce").fillna(0).astype(int)
-    entry_rows["entry_date_yyyymmdd"] = entry_rows["entry_date"].dt.strftime("%Y%m%d")
+    entry_rows["bd_yyyymmdd"] = entry_rows["bd"].dt.strftime("%Y%m%d")
     entry_rows["position_id_check"] = entry_rows.apply(
         lambda row: build_position_id(
             strategy_id,
             variant_id,
             str(row["ticker"]),
-            str(row["entry_date_yyyymmdd"]),
+            str(row["bd_yyyymmdd"]),
             int(row["entry_seq"]),
         ),
         axis=1,
     )
     return entry_rows[
-        ["position_id", "position_id_check", "ticker", "entry_date", "entry_seq", "r_multiplier"]
-    ].drop_duplicates(subset=["position_id", "ticker", "entry_date", "entry_seq"])
+        ["position_id", "position_id_check", "ticker", "bd", "entry_seq", "r_multiplier"]
+    ].drop_duplicates(subset=["position_id", "ticker", "bd", "entry_seq"])
 
 
 def build_lifecycle_entry_seq(lifecycle_df: pd.DataFrame) -> pd.DataFrame:
     entry_rows = lifecycle_df[lifecycle_df["shares_bought_day"].fillna(0).astype(float) > 0].copy()
-    entry_rows = entry_rows.sort_values(["ticker", "entry_date", "source_event_id", "trade_index"])
-    entry_rows["entry_seq"] = entry_rows.groupby(["ticker", "entry_date"]).cumcount() + 1
-    return entry_rows[["source_event_id", "ticker", "entry_date", "entry_seq"]].drop_duplicates(
+    entry_rows = entry_rows.sort_values(["ticker", "bd", "source_event_id", "trade_index"])
+    entry_rows["entry_seq"] = entry_rows.groupby(["ticker", "bd"]).cumcount() + 1
+    return entry_rows[["source_event_id", "ticker", "bd", "entry_seq"]].drop_duplicates(
         subset=["source_event_id", "ticker"]
     )
 
@@ -117,14 +123,14 @@ def build_actions_df(strategy_id: str, variant_id: str) -> pd.DataFrame:
     lifecycle_entry_index = build_lifecycle_entry_seq(lifecycle_df)
     lifecycle_df = lifecycle_df.merge(
         lifecycle_entry_index,
-        on=["source_event_id", "ticker", "entry_date"],
+        on=["source_event_id", "ticker", "bd"],
         how="left",
     )
 
     position_index = build_position_index_from_positions(positions_df, strategy_id, variant_id)
     lifecycle_df = lifecycle_df.merge(
-        position_index[["position_id", "ticker", "entry_date", "entry_seq", "r_multiplier"]],
-        on=["ticker", "entry_date", "entry_seq"],
+        position_index[["position_id", "ticker", "bd", "entry_seq", "r_multiplier"]],
+        on=["ticker", "bd", "entry_seq"],
         how="inner",
     )
 
@@ -135,7 +141,7 @@ def build_actions_df(strategy_id: str, variant_id: str) -> pd.DataFrame:
         position_group = group.sort_values(["date", "trade_index"]).copy()
         action_seq = 1
         realized_r_cum = 0.0
-        entry_date = pd.Timestamp(position_group["entry_date"].iloc[0]).normalize()
+        bd = pd.Timestamp(position_group["bd"].iloc[0]).normalize()
         ticker = str(position_group["ticker"].iloc[0]).upper()
 
         for _, row in position_group.iterrows():
@@ -155,7 +161,7 @@ def build_actions_df(strategy_id: str, variant_id: str) -> pd.DataFrame:
                         "ticker": ticker,
                         "action_seq": action_seq,
                         "action_type": "BUY",
-                        "entry_date": entry_date.strftime("%Y-%m-%d"),
+                        "bd": bd.strftime("%Y-%m-%d"),
                         "shares_delta": shares_bought_day,
                         "shares_open_after": int(row["shares_open_end"]),
                         "realized_r_delta": 0.0,
@@ -180,7 +186,7 @@ def build_actions_df(strategy_id: str, variant_id: str) -> pd.DataFrame:
                         "ticker": ticker,
                         "action_seq": action_seq,
                         "action_type": "SELL",
-                        "entry_date": entry_date.strftime("%Y-%m-%d"),
+                        "bd": bd.strftime("%Y-%m-%d"),
                         "shares_delta": -shares_sold_day,
                         "shares_open_after": int(row["shares_open_end"]),
                         "realized_r_delta": round(realized_r_delta, 4),
@@ -209,7 +215,7 @@ def save_actions_outputs(
     output_paths: list[Path] = []
 
     full_path = full_dir / "portfolio_actions_daily.csv"
-    actions_df.sort_values(["action_date", "ticker", "entry_date", "action_seq"]).to_csv(full_path, index=False)
+    actions_df.sort_values(["action_date", "ticker", "bd", "action_seq"]).to_csv(full_path, index=False)
     output_paths.append(full_path)
 
     temp_df = actions_df.copy()
@@ -220,7 +226,7 @@ def save_actions_outputs(
         year_dir = get_portfolio_yearly_dir(year_int, strategy_id, variant_id, layer=layer)
         year_dir.mkdir(parents=True, exist_ok=True)
         output_path = year_dir / "portfolio_actions_daily.csv"
-        group.drop(columns=["year"]).sort_values(["action_date", "ticker", "entry_date", "action_seq"]).to_csv(
+        group.drop(columns=["year"]).sort_values(["action_date", "ticker", "bd", "action_seq"]).to_csv(
             output_path,
             index=False,
         )

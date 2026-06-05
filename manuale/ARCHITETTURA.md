@@ -18,7 +18,7 @@ Vincoli:
 - output prodotti salvati internamente nel workspace
 - semantica temporale esplicita: `SD -> BD`
 - `SD` = screen date, cioe' la seduta appena chiusa usata per lo screening
-- `BD` = buy date, cioe' la seduta operativa in cui il setup viene valutato
+- `BD` = buy date, cioe' la prima seduta di mercato successiva alla `SD` nel modello generale del sistema
 - separazione netta tra screening, lifecycle del trade e portfolio
 
 ## Blocchi principali
@@ -59,9 +59,14 @@ Il wrapper operativo principale e' `scripts/run_live_sd.py`:
 - chiede la `SD`
 - propone la prima `SD` senza screening completi
 - esegue lo screening sulla `SD`
-- calcola la `BD` precedente alla `SD`
-- aggiorna trade state e portfolio sulla `BD`
+- aggiorna trade state e portfolio sulla seduta precedente alla `SD`
 - verifica la continuita' della sequenza
+
+Nota sulla semantica temporale:
+
+- nel sistema generale la `BD` canonica di una `SD` e' la prima seduta di mercato successiva
+- `scripts/run_live_sd.py` e' un wrapper operativo diverso: usa la `SD` per lo screening corrente e la seduta precedente come data di aggiornamento portfolio
+- la seduta precedente va comunque risolta tramite market calendar NYSE, senza scorciatoie tipo `+1 day` o fallback locali
 
 Per rilanciare solo portfolio/trade state su una `BD` specifica resta disponibile
 `scripts/run_live_bd.py`.
@@ -110,18 +115,33 @@ Tabs principali correnti:
 - `Portfolio`
 - `Operazioni`
 - `Trade Console`
+- `Mese`
+- `Anno`
+- `Consuntivo`
+- `Balance`
+- `Entry Context`
 
 Responsabilita' principali:
 
 - `Overview`: stato generale del workspace live
 - `Market`: semaforo, `Blue On`, breadth e contesto mercato sulla `SD`
 - `First Screen` e `Second Screen`: lettura degli artifact `output/screening_day/`
-- `Portfolio`: stato portfolio e posizioni aperte
+- `Portfolio`: stato live del portfolio e posizioni aperte
 - `Operazioni`: una riga per ogni action di `portfolio_actions_daily.csv`, in ordine cronologico inverso
 - `Trade Console`: console ticker-level per verifica baseline, mercato, moltiplicatori, ETF filter ed entry
+- `Mese`, `Anno`, `Consuntivo`: reporting su soli trade chiusi, attribuiti per `BD`
+- `Balance`: vista portfolio balance in `R`
+- `Entry Context`: analisi dei soli trade chiusi con classificazione causale su `screen_date`
 
 La `Trade Console` deve restare allineata alla pipeline live:
 
 - usa `SD` come data di screening e ricava la `BD`
 - legge `screening_day`, `etf_context`, `trade_state` e `portfolio_live`
 - i moltiplicatori mostrati devono usare le stesse fonti canoniche dello step 3 portfolio
+
+## Refactor consigliato
+
+Per ridurre l'accoppiamento della UI Streamlit:
+
+- spostare i builder dei dataset in un modulo tipo `core/app_views/reporting.py`
+- lasciare `app.py` come consumer della logica e orchestratore dei tab

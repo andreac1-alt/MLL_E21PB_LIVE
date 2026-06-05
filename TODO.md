@@ -9,3 +9,5 @@
 - Creare una prima `app.py` minimale per il workspace live con tab `Run`, `Market`, `Portfolio`, `Trade Console`.
 - Definire la variante portfolio live iniziale e i relativi `strategy_id` / `variant_id` ufficiali.
 - Verificare il flusso completo `screening -> trading_day -> portfolio_live` su una finestra reale del `2026`.
+- Spostare i builder dei dataset in un modulo tipo `core/app_views/reporting.py`.
+- Lasciare `app.py` solo come consumer della logica.

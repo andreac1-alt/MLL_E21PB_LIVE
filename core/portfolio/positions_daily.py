@@ -83,10 +83,10 @@ SUPPORTED_VARIANTS = {
         "Take trades from all semaphore colors with no weekday exclusions."
     ),
     "blue_ex_monday_keep_blue_on_monday_2026_no_carry_in": (
-        "Same BLUE rule set, but keep only positions with entry_date >= 2026-01-01."
+        "Same BLUE rule set, but keep only positions with bd >= 2026-01-01."
     ),
     "portfolio_live_blue_ex_monday_keep_blue_on_monday_slope_gt_0_45_plus_0_25_momentum_top_half_plus_0_25_sma20_p20_p10_plus_0_25_0_50_etf_mult_1_25_0_50_2026_no_carry_in": (
-        "Same official BLUE_M sizing logic, but keep only positions with entry_date >= 2026-01-01 for the live reminder layer."
+        "Same official BLUE_M sizing logic, but keep only positions with bd >= 2026-01-01 for the live reminder layer."
     ),
 }
 
@@ -200,8 +200,12 @@ def load_trade_lifecycle_df(
     df = pd.read_csv(path)
     if df.empty:
         return df
-    for col in ["date", "source_target_date", "requested_buy_date", "entry_date"]:
+    for col in ["date", "source_target_date"]:
         df[col] = pd.to_datetime(df[col], errors="coerce").dt.normalize()
+    bd_source_col = "bd" if "bd" in df.columns else "entry_date" if "entry_date" in df.columns else None
+    if bd_source_col is None:
+        raise KeyError("Trade lifecycle privo di colonna BD/entry_date.")
+    df["bd"] = pd.to_datetime(df[bd_source_col], errors="coerce").dt.normalize()
     bool_cols = ["is_entry_day", "is_exit_day"]
     for col in bool_cols:
         df[col] = df[col].fillna(False).astype(bool)
@@ -215,7 +219,7 @@ def load_trade_lifecycle_df(
     ]
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df.dropna(subset=["date", "entry_date", "source_target_date", "ticker"]).copy()
+    return df.dropna(subset=["date", "bd", "source_target_date", "ticker"]).copy()
 
 
 def load_storico_spy_df() -> pd.DataFrame:
@@ -272,18 +276,18 @@ def build_entry_slope_df(entry_rows: pd.DataFrame) -> pd.DataFrame:
 @lru_cache(maxsize=1)
 def load_invested_only_momentum_signal_df() -> pd.DataFrame:
     if not INVESTED_ONLY_MOMENTUM_DAILY_PATH.exists():
-        return pd.DataFrame(columns=["entry_date", "prev_momentum_5d_top_half"])
+        return pd.DataFrame(columns=["bd", "prev_momentum_5d_top_half"])
     df = pd.read_csv(
         INVESTED_ONLY_MOMENTUM_DAILY_PATH,
         usecols=["date", "sizing_rule", "prev_momentum_5d_top_half"],
     )
     if df.empty:
-        return pd.DataFrame(columns=["entry_date", "prev_momentum_5d_top_half"])
+        return pd.DataFrame(columns=["bd", "prev_momentum_5d_top_half"])
     df = df[df["sizing_rule"].astype(str) == "baseline"].copy()
-    df["entry_date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
+    df["bd"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
     df["prev_momentum_5d_top_half"] = df["prev_momentum_5d_top_half"].fillna(False).astype(bool)
-    return df.dropna(subset=["entry_date"])[["entry_date", "prev_momentum_5d_top_half"]].drop_duplicates(
-        subset=["entry_date"],
+    return df.dropna(subset=["bd"])[["bd", "prev_momentum_5d_top_half"]].drop_duplicates(
+        subset=["bd"],
         keep="last",
     )
 
@@ -309,20 +313,20 @@ def load_breadth_signal_df() -> pd.DataFrame:
 @lru_cache(maxsize=1)
 def load_etf_context_signal_df() -> pd.DataFrame:
     if not ETF_CONTEXT_TRADES_PATH.exists():
-        return pd.DataFrame(columns=["ticker", "requested_buy_date", "etf_recommended"])
+        return pd.DataFrame(columns=["ticker", "bd", "etf_recommended"])
     df = pd.read_csv(
         ETF_CONTEXT_TRADES_PATH,
         usecols=["ticker", "requested_buy_date", "recommended"],
     )
     if df.empty:
-        return pd.DataFrame(columns=["ticker", "requested_buy_date", "etf_recommended"])
+        return pd.DataFrame(columns=["ticker", "bd", "etf_recommended"])
     df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
-    df["requested_buy_date"] = pd.to_datetime(df["requested_buy_date"], errors="coerce").dt.normalize()
+    df["bd"] = pd.to_datetime(df["requested_buy_date"], errors="coerce").dt.normalize()
     df["etf_recommended"] = df["recommended"].astype(str).str.strip().str.lower().eq("recommended")
-    return df.dropna(subset=["ticker", "requested_buy_date"])[
-        ["ticker", "requested_buy_date", "etf_recommended"]
+    return df.dropna(subset=["ticker", "bd"])[
+        ["ticker", "bd", "etf_recommended"]
     ].drop_duplicates(
-        subset=["ticker", "requested_buy_date"],
+        subset=["ticker", "bd"],
         keep="last",
     )
 
@@ -357,8 +361,7 @@ def apply_breadth_additive_sizing(result: pd.DataFrame, config: dict) -> pd.Data
 def assign_r_multiplier(entry_rows: pd.DataFrame, variant_id: str) -> pd.DataFrame:
     result = entry_rows.copy()
     result["source_target_date"] = pd.to_datetime(result["source_target_date"], errors="coerce").dt.normalize()
-    result["entry_date"] = pd.to_datetime(result["entry_date"], errors="coerce").dt.normalize()
-    result["requested_buy_date"] = pd.to_datetime(result["requested_buy_date"], errors="coerce").dt.normalize()
+    result["bd"] = pd.to_datetime(result["bd"], errors="coerce").dt.normalize()
     result["r_multiplier"] = 1.0
     if variant_id not in SLOPE_SIZING_VARIANTS:
         return result
@@ -376,8 +379,8 @@ def assign_r_multiplier(entry_rows: pd.DataFrame, variant_id: str) -> pd.DataFra
         return result
 
     momentum_df = load_invested_only_momentum_signal_df()
-    momentum_df["entry_date"] = pd.to_datetime(momentum_df["entry_date"], errors="coerce").dt.normalize()
-    result = result.merge(momentum_df, on="entry_date", how="left")
+    momentum_df["bd"] = pd.to_datetime(momentum_df["bd"], errors="coerce").dt.normalize()
+    result = result.merge(momentum_df, on="bd", how="left")
     result["prev_momentum_5d_top_half"] = result["prev_momentum_5d_top_half"].fillna(False).astype(bool)
 
     if "slope_add" in config:
@@ -391,8 +394,8 @@ def assign_r_multiplier(entry_rows: pd.DataFrame, variant_id: str) -> pd.DataFra
         result = apply_breadth_additive_sizing(result, config)
         if "etf_pass_multiplier" in config and "etf_fail_multiplier" in config:
             etf_df = load_etf_context_signal_df()
-            etf_df["requested_buy_date"] = pd.to_datetime(etf_df["requested_buy_date"], errors="coerce").dt.normalize()
-            result = result.merge(etf_df, on=["ticker", "requested_buy_date"], how="left")
+            etf_df["bd"] = pd.to_datetime(etf_df["bd"], errors="coerce").dt.normalize()
+            result = result.merge(etf_df, on=["ticker", "bd"], how="left")
             etf_recommended = result["etf_recommended"]
             result["etf_recommended"] = etf_recommended.where(etf_recommended.notna(), False).astype(bool)
             result.loc[result["etf_recommended"], "r_multiplier"] = (
@@ -415,15 +418,15 @@ def assign_r_multiplier(entry_rows: pd.DataFrame, variant_id: str) -> pd.DataFra
 
 def build_position_index(lifecycle_df: pd.DataFrame) -> pd.DataFrame:
     entry_rows = lifecycle_df[lifecycle_df["is_entry_day"]].copy()
-    entry_rows = entry_rows.sort_values(["ticker", "entry_date", "source_target_date", "trade_index", "source_event_id"])
+    entry_rows = entry_rows.sort_values(["ticker", "bd", "source_target_date", "trade_index", "source_event_id"])
     entry_rows["entry_seq"] = (
-        entry_rows.groupby(["ticker", "entry_date"]).cumcount() + 1
+        entry_rows.groupby(["ticker", "bd"]).cumcount() + 1
     )
     return entry_rows[
         [
             "source_event_id",
             "ticker",
-            "entry_date",
+            "bd",
             "entry_seq",
             "total_entry_shares",
         ]
@@ -473,28 +476,28 @@ def filter_variant_positions(lifecycle_df: pd.DataFrame, variant_id: str) -> pd.
             missing_blue_on_mask, "source_target_date"
         ].dt.strftime("%Y-%m-%d").map(resolve_blue_on_for_source_date)
     entry_rows["source_blue_on"] = entry_rows["source_blue_on"].fillna(False).astype(bool)
-    entry_rows["entry_weekday"] = entry_rows["entry_date"].dt.day_name().str.upper()
+    entry_rows["entry_weekday"] = entry_rows["bd"].dt.day_name().str.upper()
     entry_rows["semaforo_color_source"] = entry_rows["semaforo_color_source"].astype(str).str.strip().str.upper()
 
     if variant_id == "green_always":
         filtered = entry_rows.loc[
             entry_rows["semaforo_color_source"] == "GREEN",
-            ["source_event_id", "ticker", "entry_date", "source_target_date"],
+            ["source_event_id", "ticker", "bd", "source_target_date"],
         ].copy()
     elif variant_id == "yellow_always":
         filtered = entry_rows.loc[
             entry_rows["semaforo_color_source"] == "YELLOW",
-            ["source_event_id", "ticker", "entry_date", "source_target_date"],
+            ["source_event_id", "ticker", "bd", "source_target_date"],
         ].copy()
     elif variant_id == "red_always_top10":
         filtered = entry_rows.loc[
             entry_rows["semaforo_color_source"] == "RED",
-            ["source_event_id", "ticker", "entry_date", "source_target_date"],
+            ["source_event_id", "ticker", "bd", "source_target_date"],
         ].copy()
     elif variant_id == "all_colors_always":
         filtered = entry_rows.loc[
             entry_rows["semaforo_color_source"].isin(["BLUE", "GREEN", "YELLOW", "RED"]),
-            ["source_event_id", "ticker", "entry_date", "source_target_date"],
+            ["source_event_id", "ticker", "bd", "source_target_date"],
         ].copy()
     else:
         is_blue_source = entry_rows["semaforo_color_source"] == "BLUE"
@@ -503,21 +506,21 @@ def filter_variant_positions(lifecycle_df: pd.DataFrame, variant_id: str) -> pd.
 
         filtered = entry_rows.loc[
             is_blue_source & (is_non_monday_entry | keep_monday_entry),
-            ["source_event_id", "ticker", "entry_date", "source_target_date"],
+            ["source_event_id", "ticker", "bd", "source_target_date"],
         ].copy()
 
-    requested_buy_dates = (
-        entry_rows[["source_event_id", "ticker", "requested_buy_date"]]
+    bds = (
+        entry_rows[["source_event_id", "ticker", "bd"]]
         .drop_duplicates(subset=["source_event_id", "ticker"])
         .copy()
     )
-    filtered = filtered.merge(requested_buy_dates, on=["source_event_id", "ticker"], how="left")
+    filtered = filtered.merge(bds, on=["source_event_id", "ticker"], how="left")
 
     if variant_id in {
         "blue_ex_monday_keep_blue_on_monday_2026_no_carry_in",
         "portfolio_live_blue_ex_monday_keep_blue_on_monday_slope_gt_0_45_plus_0_25_momentum_top_half_plus_0_25_sma20_p20_p10_plus_0_25_0_50_etf_mult_1_25_0_50_2026_no_carry_in",
     }:
-        filtered = filtered.loc[filtered["entry_date"] >= NO_CARRY_IN_2026_START].copy()
+        filtered = filtered.loc[filtered["bd"] >= NO_CARRY_IN_2026_START].copy()
 
     filtered = assign_r_multiplier(filtered, variant_id)
     return filtered[["source_event_id", "ticker", "r_multiplier"]]
@@ -534,17 +537,17 @@ def build_positions_df(strategy_id: str, variant_id: str) -> pd.DataFrame:
 
     filtered_df = lifecycle_df.merge(selected_positions, on=["source_event_id", "ticker"], how="inner")
     position_index = build_position_index(filtered_df)
-    filtered_df = filtered_df.merge(position_index, on=["source_event_id", "ticker", "entry_date"], how="left")
+    filtered_df = filtered_df.merge(position_index, on=["source_event_id", "ticker", "bd"], how="left")
 
     portfolio_id = build_portfolio_id(strategy_id, variant_id)
-    filtered_df = filtered_df.sort_values(["entry_date", "ticker", "date", "trade_index"]).reset_index(drop=True)
-    filtered_df["entry_date_yyyymmdd"] = filtered_df["entry_date"].dt.strftime("%Y%m%d")
+    filtered_df = filtered_df.sort_values(["bd", "ticker", "date", "trade_index"]).reset_index(drop=True)
+    filtered_df["bd_yyyymmdd"] = filtered_df["bd"].dt.strftime("%Y%m%d")
     filtered_df["position_id"] = filtered_df.apply(
         lambda row: build_position_id(
             strategy_id,
             variant_id,
             str(row["ticker"]),
-            str(row["entry_date_yyyymmdd"]),
+            str(row["bd_yyyymmdd"]),
             int(row["entry_seq"]),
         ),
         axis=1,
@@ -565,7 +568,7 @@ def build_positions_df(strategy_id: str, variant_id: str) -> pd.DataFrame:
         filtered_df["realized_r_partial"].astype(float) + filtered_df["unrealized_r"].astype(float)
     ).round(4)
     filtered_df["is_open"] = filtered_df["shares_open_end"].fillna(0).astype(int) > 0
-    filtered_df["carry_in_from_prev_year"] = filtered_df["entry_date"].dt.year < filtered_df["date"].dt.year
+    filtered_df["carry_in_from_prev_year"] = filtered_df["bd"].dt.year < filtered_df["date"].dt.year
     last_position_year = filtered_df.groupby("position_id")["date"].transform("max").dt.year
     filtered_df["carry_out_to_next_year"] = last_position_year > filtered_df["date"].dt.year
 
@@ -577,7 +580,7 @@ def build_positions_df(strategy_id: str, variant_id: str) -> pd.DataFrame:
             "variant_id": variant_id,
             "position_id": filtered_df["position_id"],
             "ticker": filtered_df["ticker"].astype(str).str.upper(),
-            "entry_date": filtered_df["entry_date"].dt.strftime("%Y-%m-%d"),
+            "bd": filtered_df["bd"].dt.strftime("%Y-%m-%d"),
             "entry_seq": filtered_df["entry_seq"].astype(int),
             "r_multiplier": filtered_df["r_multiplier"].astype(float).round(4),
             "days_in_trade": filtered_df["days_in_trade"].astype(int),
@@ -609,7 +612,7 @@ def save_positions_outputs(
     output_paths: list[Path] = []
 
     full_path = full_dir / "portfolio_positions_daily.csv"
-    positions_df.sort_values(["date", "ticker", "entry_date", "entry_seq"]).to_csv(full_path, index=False)
+    positions_df.sort_values(["date", "ticker", "bd", "entry_seq"]).to_csv(full_path, index=False)
     output_paths.append(full_path)
 
     temp_df = positions_df.copy()
@@ -620,7 +623,7 @@ def save_positions_outputs(
         year_dir = get_portfolio_yearly_dir(year_int, strategy_id, variant_id, layer=layer)
         year_dir.mkdir(parents=True, exist_ok=True)
         output_path = year_dir / "portfolio_positions_daily.csv"
-        group.drop(columns=["year"]).sort_values(["date", "ticker", "entry_date", "entry_seq"]).to_csv(
+        group.drop(columns=["year"]).sort_values(["date", "ticker", "bd", "entry_seq"]).to_csv(
             output_path,
             index=False,
         )

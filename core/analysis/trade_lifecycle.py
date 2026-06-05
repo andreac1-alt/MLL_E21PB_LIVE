@@ -130,15 +130,17 @@ def load_entry_trade_source_df(strategy: str, start_year: int, end_year: int) ->
         return pd.DataFrame()
 
     df["source_target_date"] = pd.to_datetime(df["source_target_date"], errors="coerce").dt.normalize()
-    df["requested_buy_date"] = pd.to_datetime(df["requested_buy_date"], errors="coerce").dt.normalize()
-    df["effective_entry_date"] = pd.to_datetime(df["effective_entry_date"], errors="coerce").dt.normalize()
+    bd_source_col = "bd" if "bd" in df.columns else "requested_buy_date"
+    effective_bd_source_col = "effective_bd" if "effective_bd" in df.columns else "effective_entry_date"
+    df["bd"] = pd.to_datetime(df[bd_source_col], errors="coerce").dt.normalize()
+    df["effective_bd"] = pd.to_datetime(df[effective_bd_source_col], errors="coerce").dt.normalize()
     df["selection_rank"] = pd.to_numeric(df["selection_rank"], errors="coerce")
     df["core_score"] = pd.to_numeric(df["core_score"], errors="coerce")
     df["first_screen_count"] = pd.to_numeric(df["first_screen_count"], errors="coerce")
     df["second_screen_count"] = pd.to_numeric(df["second_screen_count"], errors="coerce")
     df["selected_count"] = pd.to_numeric(df["selected_count"], errors="coerce")
     df["source_ema21_slope_pct_5"] = pd.to_numeric(df["source_ema21_slope_pct_5"], errors="coerce")
-    df = df.dropna(subset=["source_target_date", "requested_buy_date", "ticker"])
+    df = df.dropna(subset=["source_target_date", "bd", "ticker"])
     df = df[
         (df["source_target_date"].dt.year >= int(start_year))
         & (df["source_target_date"].dt.year <= int(end_year))
@@ -172,13 +174,13 @@ def extract_trade_records(progress_row: pd.Series) -> list[dict[str, object]]:
     return trade_records
 
 
-def load_trade_legs_df(requested_buy_date: pd.Timestamp, ticker: str) -> pd.DataFrame:
-    stamp = requested_buy_date.strftime("%Y%m%d")
+def load_trade_legs_df(bd: pd.Timestamp, ticker: str) -> pd.DataFrame:
+    stamp = bd.strftime("%Y%m%d")
     legs_filename = f"{ticker}_{stamp}_trade_legs.csv"
-    legs_path = trading_day_date_dir(requested_buy_date) / TRADE_OUTPUT_SUBDIR / legs_filename
+    legs_path = trading_day_date_dir(bd) / TRADE_OUTPUT_SUBDIR / legs_filename
     if not legs_path.exists():
         legs_path = resolve_archive_file(
-            requested_buy_date,
+            bd,
             f"prova trade/{legs_filename}",
         )
     if not legs_path.exists():
@@ -194,13 +196,13 @@ def load_trade_legs_df(requested_buy_date: pd.Timestamp, ticker: str) -> pd.Data
     return legs_df.dropna(subset=["date", "price"])
 
 
-def load_trade_summary_df(requested_buy_date: pd.Timestamp) -> pd.DataFrame:
-    stamp = requested_buy_date.strftime("%Y%m%d")
+def load_trade_summary_df(bd: pd.Timestamp) -> pd.DataFrame:
+    stamp = bd.strftime("%Y%m%d")
     summary_filename = f"trade_string_{stamp}_summary.csv"
-    summary_path = trading_day_date_dir(requested_buy_date) / TRADE_OUTPUT_SUBDIR / summary_filename
+    summary_path = trading_day_date_dir(bd) / TRADE_OUTPUT_SUBDIR / summary_filename
     if not summary_path.exists():
         summary_path = resolve_archive_file(
-            requested_buy_date,
+            bd,
             f"prova trade/{summary_filename}",
         )
     if not summary_path.exists():
@@ -216,8 +218,8 @@ def load_trade_summary_df(requested_buy_date: pd.Timestamp) -> pd.DataFrame:
     return summary_df.dropna(subset=["ticker", "buy_date"])
 
 
-def load_trade_summary_frozen_df(strategy: str, requested_buy_date: pd.Timestamp) -> pd.DataFrame:
-    date_tag = requested_buy_date.strftime("%Y%m%d")
+def load_trade_summary_frozen_df(strategy: str, bd: pd.Timestamp) -> pd.DataFrame:
+    date_tag = bd.strftime("%Y%m%d")
     summary_path = (
         get_portfolio_full_dir(strategy, TRADE_ENGINE_DIRNAME, layer="frozen")
         / TRADE_SUMMARY_DIRNAME
@@ -233,99 +235,99 @@ def load_trade_summary_frozen_df(strategy: str, requested_buy_date: pd.Timestamp
     return summary_df.dropna(subset=["ticker", "buy_date"])
 
 
-def resolve_effective_buy_date(requested_buy_date: pd.Timestamp, ticker: str) -> pd.Timestamp:
-    summary_df = load_trade_summary_df(requested_buy_date)
+def resolve_effective_bd(bd: pd.Timestamp, ticker: str) -> pd.Timestamp:
+    summary_df = load_trade_summary_df(bd)
     ticker_mask = summary_df["ticker"] == str(ticker).strip().upper()
     ticker_rows = summary_df.loc[ticker_mask].sort_values("buy_date")
     if ticker_rows.empty:
         raise ValueError(
-            f"Ticker {ticker} non trovato nel trade summary del requested buy {requested_buy_date.date()}."
+            f"Ticker {ticker} non trovato nel trade summary della BD {bd.date()}."
         )
     return pd.Timestamp(ticker_rows.iloc[0]["buy_date"]).normalize()
 
 
-def resolve_effective_buy_date_frozen(
+def resolve_effective_bd_frozen(
     strategy: str,
-    requested_buy_date: pd.Timestamp,
+    bd: pd.Timestamp,
     ticker: str,
 ) -> pd.Timestamp:
-    summary_df = load_trade_summary_frozen_df(strategy, requested_buy_date)
+    summary_df = load_trade_summary_frozen_df(strategy, bd)
     ticker_mask = summary_df["ticker"] == str(ticker).strip().upper()
     ticker_rows = summary_df.loc[ticker_mask].sort_values("buy_date")
     if ticker_rows.empty:
         raise ValueError(
-            f"Ticker {ticker} non trovato nel trade summary frozen del requested buy {requested_buy_date.date()}."
+            f"Ticker {ticker} non trovato nel trade summary frozen della BD {bd.date()}."
         )
     return pd.Timestamp(ticker_rows.iloc[0]["buy_date"]).normalize()
 
 
-def load_trade_summary_row_for_requested_buy_date(
-    requested_buy_date: pd.Timestamp,
+def load_trade_summary_row_for_bd(
+    bd: pd.Timestamp,
     ticker: str,
 ) -> pd.Series:
-    summary_df = load_trade_summary_df(requested_buy_date)
+    summary_df = load_trade_summary_df(bd)
     ticker_mask = summary_df["ticker"] == str(ticker).strip().upper()
     ticker_rows = summary_df.loc[ticker_mask].sort_values("buy_date")
     if ticker_rows.empty:
         raise ValueError(
-            f"Ticker {ticker} non trovato nel trade summary del requested buy {requested_buy_date.date()}."
+            f"Ticker {ticker} non trovato nel trade summary della BD {bd.date()}."
         )
     return ticker_rows.iloc[0]
 
 
-def load_trade_summary_frozen_row_for_requested_buy_date(
+def load_trade_summary_frozen_row_for_bd(
     strategy: str,
-    requested_buy_date: pd.Timestamp,
+    bd: pd.Timestamp,
     ticker: str,
 ) -> pd.Series:
-    summary_df = load_trade_summary_frozen_df(strategy, requested_buy_date)
+    summary_df = load_trade_summary_frozen_df(strategy, bd)
     ticker_mask = summary_df["ticker"] == str(ticker).strip().upper()
     ticker_rows = summary_df.loc[ticker_mask].sort_values("buy_date")
     if ticker_rows.empty:
         raise ValueError(
-            f"Ticker {ticker} non trovato nel trade summary frozen del requested buy {requested_buy_date.date()}."
+            f"Ticker {ticker} non trovato nel trade summary frozen della BD {bd.date()}."
         )
     return ticker_rows.iloc[0]
 
 
-def load_trade_legs_df_for_requested_buy_date(requested_buy_date: pd.Timestamp, ticker: str) -> tuple[pd.DataFrame, pd.Timestamp]:
-    effective_buy_date = resolve_effective_buy_date(requested_buy_date, ticker)
-    stamp = effective_buy_date.strftime("%Y%m%d")
+def load_trade_legs_df_for_bd(bd: pd.Timestamp, ticker: str) -> tuple[pd.DataFrame, pd.Timestamp]:
+    effective_bd = resolve_effective_bd(bd, ticker)
+    stamp = effective_bd.strftime("%Y%m%d")
     legs_filename = f"{ticker}_{stamp}_trade_legs.csv"
-    legs_path = trading_day_date_dir(effective_buy_date) / TRADE_OUTPUT_SUBDIR / legs_filename
+    legs_path = trading_day_date_dir(effective_bd) / TRADE_OUTPUT_SUBDIR / legs_filename
     if not legs_path.exists():
         legs_path = resolve_archive_file(
-            effective_buy_date,
+            effective_bd,
             f"prova trade/{legs_filename}",
         )
     if not legs_path.exists():
         raise FileNotFoundError(
             f"Trade legs non trovato: {legs_path} "
-            f"(ticker={ticker}, requested_buy_date={requested_buy_date.date()}, "
-            f"effective_buy_date={effective_buy_date.date()})"
+            f"(ticker={ticker}, bd={bd.date()}, "
+            f"effective_bd={effective_bd.date()})"
         )
     legs_df = pd.read_csv(legs_path)
     if legs_df.empty:
         raise ValueError(
             f"Trade legs vuoto: {legs_path} "
-            f"(ticker={ticker}, requested_buy_date={requested_buy_date.date()}, "
-            f"effective_buy_date={effective_buy_date.date()})"
+            f"(ticker={ticker}, bd={bd.date()}, "
+            f"effective_bd={effective_bd.date()})"
         )
     legs_df["date"] = pd.to_datetime(legs_df["date"], errors="coerce").dt.normalize()
     legs_df["price"] = pd.to_numeric(legs_df["price"], errors="coerce")
     legs_df["shares"] = pd.to_numeric(legs_df["shares"], errors="coerce").fillna(0).astype(int)
     legs_df["risk_amount"] = pd.to_numeric(legs_df["risk_amount"], errors="coerce")
     legs_df["stop_loss"] = pd.to_numeric(legs_df["stop_loss"], errors="coerce")
-    return legs_df.dropna(subset=["date", "price"]), effective_buy_date
+    return legs_df.dropna(subset=["date", "price"]), effective_bd
 
 
-def load_trade_legs_frozen_df_for_requested_buy_date(
+def load_trade_legs_frozen_df_for_bd(
     strategy: str,
-    requested_buy_date: pd.Timestamp,
+    bd: pd.Timestamp,
     ticker: str,
 ) -> tuple[pd.DataFrame, pd.Timestamp]:
-    effective_buy_date = resolve_effective_buy_date_frozen(strategy, requested_buy_date, ticker)
-    stamp = effective_buy_date.strftime("%Y%m%d")
+    effective_bd = resolve_effective_bd_frozen(strategy, bd, ticker)
+    stamp = effective_bd.strftime("%Y%m%d")
     legs_path = (
         get_portfolio_full_dir(strategy, TRADE_ENGINE_DIRNAME, layer="frozen")
         / TRADE_LEGS_DIRNAME
@@ -334,22 +336,22 @@ def load_trade_legs_frozen_df_for_requested_buy_date(
     if not legs_path.exists():
         raise FileNotFoundError(
             f"Trade legs frozen non trovato: {legs_path} "
-            f"(ticker={ticker}, requested_buy_date={requested_buy_date.date()}, "
-            f"effective_buy_date={effective_buy_date.date()})"
+            f"(ticker={ticker}, bd={bd.date()}, "
+            f"effective_bd={effective_bd.date()})"
         )
     legs_df = pd.read_csv(legs_path, keep_default_na=False)
     if legs_df.empty:
         raise ValueError(
             f"Trade legs frozen vuoto: {legs_path} "
-            f"(ticker={ticker}, requested_buy_date={requested_buy_date.date()}, "
-            f"effective_buy_date={effective_buy_date.date()})"
+            f"(ticker={ticker}, bd={bd.date()}, "
+            f"effective_bd={effective_bd.date()})"
         )
     legs_df["date"] = pd.to_datetime(legs_df["date"], errors="coerce").dt.normalize()
     legs_df["price"] = pd.to_numeric(legs_df["price"], errors="coerce")
     legs_df["shares"] = pd.to_numeric(legs_df["shares"], errors="coerce").fillna(0).astype(int)
     legs_df["risk_amount"] = pd.to_numeric(legs_df["risk_amount"], errors="coerce")
     legs_df["stop_loss"] = pd.to_numeric(legs_df["stop_loss"], errors="coerce")
-    return legs_df.dropna(subset=["date", "price"]), effective_buy_date
+    return legs_df.dropna(subset=["date", "price"]), effective_bd
 
 
 @lru_cache(maxsize=None)
@@ -371,24 +373,24 @@ def build_lifecycle_rows(
     progress_row: pd.Series,
     trade_record: dict[str, object],
 ) -> list[dict[str, object]]:
-    requested_buy_date = pd.Timestamp(progress_row["buy_date"]).normalize()
+    bd = pd.Timestamp(progress_row["buy_date"]).normalize()
     target_date = pd.Timestamp(progress_row["target_date"]).normalize()
     ticker = str(trade_record["ticker"])
     final_trade_r = trade_record["final_trade_r"]
-    source_event_id = f"{strategy}|{target_date.strftime('%Y-%m-%d')}|{requested_buy_date.strftime('%Y-%m-%d')}"
+    source_event_id = f"{strategy}|{target_date.strftime('%Y-%m-%d')}|{bd.strftime('%Y-%m-%d')}"
 
-    legs_df, effective_buy_date = load_trade_legs_df_for_requested_buy_date(requested_buy_date, ticker)
+    legs_df, effective_bd = load_trade_legs_df_for_bd(bd, ticker)
     close_history = load_close_history(ticker)
 
     buy_legs = legs_df[legs_df["label"].astype(str).str.upper() == "BUY"].copy()
     if buy_legs.empty:
         raise ValueError(
             f"Nessun BUY leg trovato per {ticker} "
-            f"(requested_buy_date={requested_buy_date.date()}, effective_buy_date={effective_buy_date.date()})."
+            f"(bd={bd.date()}, effective_bd={effective_bd.date()})."
         )
 
     entry_leg = buy_legs.sort_values("date").iloc[0]
-    entry_date = pd.Timestamp(entry_leg["date"]).normalize()
+    bd = pd.Timestamp(entry_leg["date"]).normalize()
     entry_price = float(entry_leg["price"])
     risk_amount = float(entry_leg["risk_amount"])
     stop_loss = float(entry_leg["stop_loss"])
@@ -396,14 +398,14 @@ def build_lifecycle_rows(
     if total_entry_shares <= 0:
         raise ValueError(
             f"Quantita iniziale non valida per {ticker} "
-            f"(requested_buy_date={requested_buy_date.date()}, effective_buy_date={effective_buy_date.date()})."
+            f"(bd={bd.date()}, effective_bd={effective_bd.date()})."
         )
 
     last_leg_date = pd.Timestamp(legs_df["date"].max()).normalize()
-    scoped_history = close_history.loc[(close_history.index >= entry_date) & (close_history.index <= last_leg_date)].copy()
+    scoped_history = close_history.loc[(close_history.index >= bd) & (close_history.index <= last_leg_date)].copy()
     if scoped_history.empty:
         raise ValueError(
-            f"Nessun close disponibile tra {entry_date.date()} e {last_leg_date.date()} per {ticker}."
+            f"Nessun close disponibile tra {bd.date()} e {last_leg_date.date()} per {ticker}."
         )
 
     legs_by_date: dict[pd.Timestamp, pd.DataFrame] = {
@@ -466,8 +468,7 @@ def build_lifecycle_rows(
                 "ticker": ticker,
                 "source_event_id": source_event_id,
                 "source_target_date": target_date.strftime("%Y-%m-%d"),
-                "requested_buy_date": requested_buy_date.strftime("%Y-%m-%d"),
-                "entry_date": entry_date.strftime("%Y-%m-%d"),
+                "bd": bd.strftime("%Y-%m-%d"),
                 "trade_index": int(trade_record["trade_index"]),
                 "risk_amount": round(risk_amount, 4),
                 "entry_price": round(entry_price, 4),
@@ -487,7 +488,7 @@ def build_lifecycle_rows(
                 "unrealized_r_close": round(unrealized_r_close, 4),
                 "open_risk_amount": round(open_risk_amount, 4),
                 "position_status": "closed" if shares_open_end == 0 else "open",
-                "is_entry_day": current_date == entry_date,
+                "is_entry_day": current_date == bd,
                 "is_exit_day": shares_open_start > 0 and shares_open_end == 0,
                 "buy_reason": buy_reason,
                 "sell_reason": sell_reason,
@@ -509,25 +510,26 @@ def build_lifecycle_rows_from_entry_trade_row(
     strategy: str,
     entry_row: pd.Series,
 ) -> list[dict[str, object]]:
-    requested_buy_date = pd.Timestamp(entry_row["requested_buy_date"]).normalize()
+    bd_source_col = "bd" if "bd" in entry_row.index else "requested_buy_date"
+    bd = pd.Timestamp(entry_row[bd_source_col]).normalize()
     target_date = pd.Timestamp(entry_row["source_target_date"]).normalize()
     ticker = str(entry_row["ticker"]).strip().upper()
     trade_index = pd.to_numeric(entry_row.get("selection_rank"), errors="coerce")
-    source_event_id = f"{strategy}|{target_date.strftime('%Y-%m-%d')}|{requested_buy_date.strftime('%Y-%m-%d')}|{ticker}"
-    legs_df, effective_buy_date = load_trade_legs_frozen_df_for_requested_buy_date(strategy, requested_buy_date, ticker)
+    source_event_id = f"{strategy}|{target_date.strftime('%Y-%m-%d')}|{bd.strftime('%Y-%m-%d')}|{ticker}"
+    legs_df, effective_bd = load_trade_legs_frozen_df_for_bd(strategy, bd, ticker)
     close_history = load_close_history(ticker)
-    summary_row = load_trade_summary_frozen_row_for_requested_buy_date(strategy, requested_buy_date, ticker)
+    summary_row = load_trade_summary_frozen_row_for_bd(strategy, bd, ticker)
     final_trade_r = pd.to_numeric(summary_row.get("realized_r"), errors="coerce")
 
     buy_legs = legs_df[legs_df["label"].astype(str).str.upper() == "BUY"].copy()
     if buy_legs.empty:
         raise ValueError(
             f"Nessun BUY leg trovato per {ticker} "
-            f"(requested_buy_date={requested_buy_date.date()}, effective_buy_date={effective_buy_date.date()})."
+            f"(bd={bd.date()}, effective_bd={effective_bd.date()})."
         )
 
     entry_leg = buy_legs.sort_values("date").iloc[0]
-    entry_date = pd.Timestamp(entry_leg["date"]).normalize()
+    bd = pd.Timestamp(entry_leg["date"]).normalize()
     entry_price = float(entry_leg["price"])
     risk_amount = float(entry_leg["risk_amount"])
     stop_loss = float(entry_leg["initial_stop_loss"])
@@ -535,14 +537,14 @@ def build_lifecycle_rows_from_entry_trade_row(
     if total_entry_shares <= 0:
         raise ValueError(
             f"Quantita iniziale non valida per {ticker} "
-            f"(requested_buy_date={requested_buy_date.date()}, effective_buy_date={effective_buy_date.date()})."
+            f"(bd={bd.date()}, effective_bd={effective_bd.date()})."
         )
 
     last_leg_date = pd.Timestamp(legs_df["date"].max()).normalize()
-    scoped_history = close_history.loc[(close_history.index >= entry_date) & (close_history.index <= last_leg_date)].copy()
+    scoped_history = close_history.loc[(close_history.index >= bd) & (close_history.index <= last_leg_date)].copy()
     if scoped_history.empty:
         raise ValueError(
-            f"Nessun close disponibile tra {entry_date.date()} e {last_leg_date.date()} per {ticker}."
+            f"Nessun close disponibile tra {bd.date()} e {last_leg_date.date()} per {ticker}."
         )
 
     legs_by_date: dict[pd.Timestamp, pd.DataFrame] = {
@@ -605,8 +607,7 @@ def build_lifecycle_rows_from_entry_trade_row(
                 "ticker": ticker,
                 "source_event_id": source_event_id,
                 "source_target_date": target_date.strftime("%Y-%m-%d"),
-                "requested_buy_date": requested_buy_date.strftime("%Y-%m-%d"),
-                "entry_date": entry_date.strftime("%Y-%m-%d"),
+                "bd": bd.strftime("%Y-%m-%d"),
                 "trade_index": int(trade_index) if pd.notna(trade_index) else None,
                 "risk_amount": round(risk_amount, 4),
                 "entry_price": round(entry_price, 4),
@@ -626,7 +627,7 @@ def build_lifecycle_rows_from_entry_trade_row(
                 "unrealized_r_close": round(unrealized_r_close, 4),
                 "open_risk_amount": round(open_risk_amount, 4),
                 "position_status": "closed" if shares_open_end == 0 else "open",
-                "is_entry_day": current_date == entry_date,
+                "is_entry_day": current_date == bd,
                 "is_exit_day": shares_open_start > 0 and shares_open_end == 0,
                 "buy_reason": buy_reason,
                 "sell_reason": sell_reason,
@@ -661,10 +662,10 @@ def build_portfolio_state_df(lifecycle_df: pd.DataFrame, strategy: str) -> pd.Da
     lifecycle_df["source_target_date"] = pd.to_datetime(
         lifecycle_df["source_target_date"], errors="coerce"
     ).dt.normalize()
-    lifecycle_df["requested_buy_date"] = pd.to_datetime(
-        lifecycle_df["requested_buy_date"], errors="coerce"
+    lifecycle_df["bd"] = pd.to_datetime(
+        lifecycle_df["bd"], errors="coerce"
     ).dt.normalize()
-    lifecycle_df["entry_date"] = pd.to_datetime(lifecycle_df["entry_date"], errors="coerce").dt.normalize()
+    lifecycle_df["bd"] = pd.to_datetime(lifecycle_df["bd"], errors="coerce").dt.normalize()
 
     daily_rows: list[dict[str, object]] = []
     realized_r_cum = 0.0
@@ -839,7 +840,7 @@ def run_build(
                     missing_legs.append(missing_message)
             except Exception as exc:  # noqa: BLE001
                 missing_legs.append(
-                    f"{entry_row['ticker']} {entry_row['requested_buy_date']}: {exc}"
+                    f"{entry_row['ticker']} {entry_row['bd']}: {exc}"
                 )
     else:
         progress_df = load_progress_df(strategy, start_year, end_year)

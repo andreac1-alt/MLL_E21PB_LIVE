@@ -23,13 +23,21 @@ Lo script:
 - chiede la `SD` con prompt
 - suggerisce la prima `SD` per cui non vede screening completi
 - lancia `1_run_day.py` sulla `SD`
-- calcola la `BD` come seduta NYSE precedente alla `SD`
-- lancia `2_run_trade_state_day.py` sulla `BD`
-- lancia `3_build_portfolio_day.py` sulla `BD`
+- risolve la seduta precedente alla `SD` tramite market calendar NYSE
+- lancia `2_run_trade_state_day.py` su quella data
+- lancia `3_build_portfolio_day.py` su quella data
 - controlla la continuita' della sequenza `BD`, permettendo il rerun di una `BD` gia' prodotta
 
-Questo wrapper e' il flusso normale quando si opera "oggi": si processa la `SD`
-appena disponibile e si aggiorna il portfolio fino alla `BD` precedente.
+Questo wrapper e' il flusso normale quando si opera "oggi":
+
+- si fa screening sull'ultima `SD` disponibile
+- si aggiorna il portfolio sull'ultima seduta completamente osservabile, cioe' la seduta precedente alla `SD`
+
+Nota importante:
+
+- nel sistema generale la `BD` canonica di una `SD` resta la prima seduta di mercato successiva
+- `scripts/run_live_sd.py` non usa quella relazione canonica per il portfolio update del giorno corrente
+- la data usata dal wrapper va comunque risolta via market calendar NYSE
 
 ## Step 1 - Screening
 
@@ -123,6 +131,11 @@ L'app espone:
 - `Portfolio`: ultimo portfolio disponibile e posizioni aperte
 - `Operazioni`: tabella action-level da `portfolio_actions_daily.csv`
 - `Trade Console`: vista operativa ticker-level con dati, mercato, moltiplicatori, ETF filter ed entry
+- `Mese`: reporting su trade chiusi attribuiti per `BD`
+- `Anno`: reporting annuale su trade chiusi attribuiti per `BD`
+- `Consuntivo`: aggregati mensili su trade chiusi attribuiti per `BD`
+- `Balance`: portfolio balance in `R`
+- `Entry Context`: contesto dei trade chiusi classificato per `screen_date`
 
 Nota app:
 

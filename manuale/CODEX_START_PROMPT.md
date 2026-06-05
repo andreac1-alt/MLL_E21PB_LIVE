@@ -29,7 +29,7 @@ Pipeline canonica nuova:
    - chiede la SD
    - suggerisce la prima SD senza screening completi
    - lancia step 1 sulla SD
-   - calcola la BD precedente alla SD
+   - risolve la seduta precedente alla SD via market calendar NYSE
    - lancia step 2 e step 3 sulla BD
    - comando:
      venv/bin/python scripts/run_live_sd.py
@@ -70,14 +70,27 @@ App:
   - Portfolio
   - Operazioni
   - Trade Console
+  - Mese
+  - Anno
+  - Consuntivo
+  - Balance
+  - Entry Context
 - Trade Console:
   - usa semantica live SD -> BD
   - mostra sezioni Dati, Mercato, Moltiplicatori, ETF Filter ed Entry
   - i moltiplicatori devono leggere le stesse fonti canoniche dello step 3 portfolio
+- Reporting app:
+  - `Mese`, `Anno`, `Consuntivo` lavorano su soli trade chiusi attribuiti per `BD`
+  - `Balance` mostra portfolio balance in `R`
+  - `Entry Context` lavora su soli trade chiusi e classifica il contesto su `screen_date`
 
 Terminologia obbligatoria:
 - SD = screen date
 - BD = buy date
+
+Regola temporale da ricordare:
+- nel sistema generale la `BD` canonica di una `SD` e' la prima seduta di mercato successiva
+- dentro `scripts/run_live_sd.py` si usa invece la seduta precedente alla `SD` come data di update portfolio, perche' e' l'ultima seduta completamente osservabile
 
 Non usare target_date quando stai parlando della pipeline live trade/portfolio, a meno che tu stia citando codice legacy che usa ancora quel nome.
 
@@ -125,6 +138,7 @@ Caso guida verificato:
 
 Quando lavori:
 - prima leggi il codice e i manuali, non assumere
+- a fine giornata aggiorna `INSIGHTS/work_diary.csv` con una breve narrazione dei punti salienti del lavoro
 - usa rg per cercare
 - non ripristinare o cancellare file senza richiesta esplicita
 - usa apply_patch per modifiche manuali
@@ -135,3 +149,7 @@ Prossimo lavoro naturale:
 continuare i run live da SD e verificare dalla app la coerenza di trade_state,
 trade_sizing, actions e portfolio_state.
 ```
+
+Refactor desiderato:
+- spostare i builder dei dataset fuori da `app.py`, ad esempio in `core/app_views/reporting.py`
+- lasciare `app.py` come consumer della logica
