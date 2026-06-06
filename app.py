@@ -983,6 +983,11 @@ def render_market_tab(state: pd.DataFrame, momentum: pd.DataFrame) -> None:
                         window_rows.append(
                             {
                                 "date": pd.Timestamp(dt).strftime("%Y-%m-%d"),
+                                "buy_date": (
+                                    next_market_session(pd.Timestamp(dt)).strftime("%Y-%m-%d")
+                                    if next_market_session(pd.Timestamp(dt)) is not None
+                                    else "N/D"
+                                ),
                                 "core_score": window_result.core_score,
                                 "semaforo_color": window_result.market_street_light,
                                 "is_selected": pd.Timestamp(dt).normalize() == anchor_date,
@@ -1012,11 +1017,11 @@ def render_market_tab(state: pd.DataFrame, momentum: pd.DataFrame) -> None:
                                 if row["is_selected"]
                                 else ""
                             )
-                            min_width = "138px" if row["is_selected"] else "96px"
+                            min_width = "170px" if row["is_selected"] else "148px"
                             padding = "0.9rem 0.95rem" if row["is_selected"] else "0.58rem 0.62rem"
-                            date_font = "0.88rem" if row["is_selected"] else "0.72rem"
+                            date_font = "0.84rem" if row["is_selected"] else "0.7rem"
                             color_font = "1.12rem" if row["is_selected"] else "0.9rem"
-                            score_font = "0.84rem" if row["is_selected"] else "0.74rem"
+                            score_font = "0.82rem" if row["is_selected"] else "0.72rem"
                             cards.append(
                                 f"""
                                 <div style="
@@ -1028,9 +1033,10 @@ def render_market_tab(state: pd.DataFrame, momentum: pd.DataFrame) -> None:
                                     color: {text};
                                     {selected_style}
                                 " {'data-selected="true"' if row["is_selected"] else ""}>
-                                    <div style="font-size:{date_font}; font-weight:600;">{row['date']}</div>
+                                    <div style="font-size:{date_font}; font-weight:600;">SD {row['date']}</div>
                                     <div style="font-size:{color_font}; font-weight:800; margin-top:0.25rem;">{color}</div>
                                     <div style="font-size:{score_font}; margin-top:0.2rem;">score {row['core_score']}/3</div>
+                                    <div style="font-size:{date_font}; margin-top:0.22rem;">BD {row['buy_date']}</div>
                                     {selected_label}
                                 </div>
                                 """
