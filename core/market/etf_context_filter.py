@@ -109,14 +109,14 @@ def get_core_reference_etf_weight_pairs(
     return pairs
 
 
-def _prepare_history(history: pd.DataFrame | None, target_date: pd.Timestamp | None = None) -> pd.DataFrame:
+def _prepare_history(history: pd.DataFrame | None, screen_date: pd.Timestamp | None = None) -> pd.DataFrame:
     if history is None or history.empty:
         return pd.DataFrame()
     prepared = history.copy()
     prepared.index = pd.to_datetime(prepared.index, errors="coerce").normalize()
     prepared = prepared[prepared.index.notna()].sort_index()
-    if target_date is not None:
-        prepared = prepared.loc[prepared.index <= pd.Timestamp(target_date).normalize()]
+    if screen_date is not None:
+        prepared = prepared.loc[prepared.index <= pd.Timestamp(screen_date).normalize()]
     required_columns = {"High", "Low", "Close"}
     if prepared.empty or not required_columns.issubset(set(prepared.columns)):
         return pd.DataFrame()
@@ -202,16 +202,16 @@ def _percentile_rank(value: float, values: list[float]) -> float | None:
 def compute_etf_score(
     etf: str,
     *,
-    target_date: pd.Timestamp | str | None = None,
+    screen_date: pd.Timestamp | str | None = None,
     price_loader: PriceLoader = load_cached_price_history_any_end,
     spy_history: pd.DataFrame | None = None,
 ) -> EtfScore:
     etf_ticker = _normalize_ticker(etf)
-    effective_target_date = None if target_date is None else pd.Timestamp(target_date)
-    etf_history = _prepare_history(price_loader(etf_ticker), effective_target_date)
+    effective_screen_date = None if screen_date is None else pd.Timestamp(screen_date)
+    etf_history = _prepare_history(price_loader(etf_ticker), effective_screen_date)
     if spy_history is None:
         spy_history = price_loader(SPY_TICKER)
-    prepared_spy = _prepare_history(spy_history, effective_target_date)
+    prepared_spy = _prepare_history(spy_history, effective_screen_date)
 
     min_rs_window = min(window for window, _ in RS_WINDOWS)
     if len(etf_history) < SMA200_WINDOW or len(prepared_spy) <= min_rs_window:
@@ -275,17 +275,17 @@ def compute_etf_score(
 
 def compute_etf_universe_scores(
     *,
-    target_date: pd.Timestamp | str | None = None,
+    screen_date: pd.Timestamp | str | None = None,
     etf_universe_path: Path = ETF_UNIVERSE_PATH,
     price_loader: PriceLoader = load_cached_price_history_any_end,
 ) -> tuple[EtfScore, ...]:
-    effective_target_date = None if target_date is None else pd.Timestamp(target_date)
-    spy_history = _prepare_history(price_loader(SPY_TICKER), effective_target_date)
+    effective_screen_date = None if screen_date is None else pd.Timestamp(screen_date)
+    spy_history = _prepare_history(price_loader(SPY_TICKER), effective_screen_date)
     scores: list[EtfScore] = []
     for etf in sorted(load_etf_universe(etf_universe_path)):
         score = compute_etf_score(
             etf,
-            target_date=effective_target_date,
+            screen_date=effective_screen_date,
             price_loader=price_loader,
             spy_history=spy_history,
         )
@@ -297,7 +297,7 @@ def compute_etf_universe_scores(
 def compute_context_score(
     ticker: str,
     *,
-    target_date: pd.Timestamp | str | None = None,
+    screen_date: pd.Timestamp | str | None = None,
     map_path: Path = REFERENCE_ETF_MAP_PATH,
     etf_universe_path: Path = ETF_UNIVERSE_PATH,
     price_loader: PriceLoader = load_cached_price_history_any_end,
@@ -312,15 +312,15 @@ def compute_context_score(
     if not core_etf_weight_pairs:
         return ContextScore(normalized_ticker, False, None, None, None, (), "missing_reference_etfs")
 
-    effective_target_date = None if target_date is None else pd.Timestamp(target_date)
-    spy_history = _prepare_history(price_loader(SPY_TICKER), effective_target_date)
+    effective_screen_date = None if screen_date is None else pd.Timestamp(screen_date)
+    spy_history = _prepare_history(price_loader(SPY_TICKER), effective_screen_date)
     if spy_history.empty:
         return ContextScore(normalized_ticker, False, None, None, None, (), "missing_spy_history")
 
     scored_candidates = tuple(
         compute_etf_score(
             etf,
-            target_date=effective_target_date,
+            screen_date=effective_screen_date,
             price_loader=price_loader,
             spy_history=spy_history,
         )
@@ -356,7 +356,7 @@ def compute_context_score(
     )
     if universe_scores is None:
         universe_scores = compute_etf_universe_scores(
-            target_date=effective_target_date,
+            screen_date=effective_screen_date,
             etf_universe_path=etf_universe_path,
             price_loader=price_loader,
         )
@@ -435,14 +435,14 @@ def compute_context_score(
 def allow_trade(
     ticker: str,
     *,
-    target_date: pd.Timestamp | str | None = None,
+    screen_date: pd.Timestamp | str | None = None,
     map_path: Path = REFERENCE_ETF_MAP_PATH,
     etf_universe_path: Path = ETF_UNIVERSE_PATH,
     price_loader: PriceLoader = load_cached_price_history_any_end,
 ) -> str:
     context_score = compute_context_score(
         ticker,
-        target_date=target_date,
+        screen_date=screen_date,
         map_path=map_path,
         etf_universe_path=etf_universe_path,
         price_loader=price_loader,

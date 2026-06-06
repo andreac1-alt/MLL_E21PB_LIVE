@@ -68,10 +68,10 @@ Script:
 
 Output portfolio:
 
-- `output/portfolio_live/full/EMA21_SMA50/portfolio_live_trade_state_2026_no_carry_in/portfolio_positions_daily.csv`
-- `output/portfolio_live/full/EMA21_SMA50/portfolio_live_trade_state_2026_no_carry_in/portfolio_actions_daily.csv`
-- `output/portfolio_live/full/EMA21_SMA50/portfolio_live_trade_state_2026_no_carry_in/portfolio_state_daily.csv`
-- yearly slice sotto `output/portfolio_live/yearly/YYYY/EMA21_SMA50/portfolio_live_trade_state_2026_no_carry_in/`
+- `output/portfolio_live/full/MLL_PB/base/portfolio_positions_daily.csv`
+- `output/portfolio_live/full/MLL_PB/base/portfolio_actions_daily.csv`
+- `output/portfolio_live/full/MLL_PB/base/portfolio_state_daily.csv`
+- yearly slice sotto `output/portfolio_live/yearly/YYYY/MLL_PB/base/`
 
 Output diagnostico per BD:
 
@@ -93,13 +93,13 @@ Responsabilita':
 
 Valori canonici correnti:
 
-- `strategy_id = EMA21_SMA50`
-- `variant_id = portfolio_live_trade_state_2026_no_carry_in`
-- `portfolio_id = EMA21_SMA50__portfolio_live_trade_state_2026_no_carry_in`
+- `strategy_id = MLL_PB`
+- `variant_id = base`
+- `portfolio_id = base_port`
 
 Chiave posizione:
 
-`<strategy_id>__<variant_id>__<ticker>__<entry_date_yyyymmdd>__<entry_seq>`
+`<ticker>__<bd_yyyymmdd>__<entry_seq>`
 
 Regola:
 
@@ -175,7 +175,7 @@ Breadth:
 Momentum:
 
 - legge `portfolio_state_daily.csv`
-- scrive `output/portfolio_live/full/EMA21_SMA50/portfolio_live_trade_state_2026_no_carry_in/market/momentum_inv5d_signal.csv`
+- scrive `output/portfolio_live/full/MLL_PB/base/market/momentum_inv5d_signal.csv`
 - per una `BD` usa il segnale gia' disponibile con reference date a 2 sedute precedenti
 - dopo il build portfolio della `BD`, aggiorna il segnale per i giorni successivi
 

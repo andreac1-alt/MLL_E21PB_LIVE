@@ -7,8 +7,6 @@
 
 ## Struttura target
 
-- `output/archivio/`
-  - archive locali del workflow screen e componenti legacy
 - `output/screening_day/`
   - output dello step 1, organizzati per `SD`
 - `output/trade_state/`
@@ -28,6 +26,8 @@
 
 - `INSIGHTS/`
   - diario, insight, note evolutive del workspace
+- `archivio/`
+  - backup e snapshot storici fuori dal flusso operativo corrente
 
 ## Distinzione chiave
 
@@ -81,11 +81,11 @@ Stati:
 
 ## Legacy
 
-Il precedente `output/trading_day/` e' stato archiviato in:
+Il precedente `output/trading_day/` e' legacy e non fa piu' parte del flusso live canonico.
 
-`output/archivio/20260602_pipeline_legacy/trading_day/`
+I backup operativi locali vanno salvati in:
 
-Non e' piu' parte del flusso live canonico.
+`archivio/`
 
 Anche il vecchio `trade_timeline` legacy e la vecchia variante portfolio lunga
 sono stati archiviati e non sono piu' fonti operative della pipeline live nuova.

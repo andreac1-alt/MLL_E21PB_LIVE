@@ -18,12 +18,8 @@ from core.portfolio.positions_daily import run_build as run_positions_build
 from core.portfolio.state_daily import run_build as run_state_build
 
 
-DEFAULT_STRATEGY_ID = "EMA21_SMA50"
-DEFAULT_VARIANT_ID = (
-    "portfolio_live_blue_ex_monday_keep_blue_on_monday_"
-    "slope_gt_0_45_plus_0_25_momentum_top_half_plus_0_25_"
-    "sma20_p20_p10_plus_0_25_0_50_etf_mult_1_25_0_50_2026_no_carry_in"
-)
+DEFAULT_STRATEGY_ID = "MLL_PB"
+DEFAULT_VARIANT_ID = "base"
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,7 +95,7 @@ def build_portfolio_live_day_by_day(
     if progress_df.empty:
         raise FileNotFoundError("Nessun trading_day progress disponibile per il range richiesto.")
 
-    progress_df = progress_df.sort_values(["buy_date", "target_date"]).reset_index(drop=True)
+    progress_df = progress_df.sort_values(["buy_date", "screen_date"]).reset_index(drop=True)
     if through_buy_date is not None:
         limit = pd.Timestamp(through_buy_date).normalize()
         progress_df = progress_df.loc[progress_df["buy_date"] <= limit].copy()

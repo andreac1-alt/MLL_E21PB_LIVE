@@ -72,10 +72,10 @@ def build_etf_context_for_sd(screen_date: pd.Timestamp, tickers: list[str] | Non
         tickers = source_df.get("ticker", pd.Series(dtype=str)).astype(str).str.strip().str.upper().tolist()
 
     normalized_tickers = sorted({str(ticker).strip().upper() for ticker in tickers if str(ticker).strip()})
-    universe_scores = compute_etf_universe_scores(target_date=sd)
+    universe_scores = compute_etf_universe_scores(screen_date=sd)
     rows: list[dict[str, object]] = []
     for ticker in normalized_tickers:
-        context = compute_context_score(ticker, target_date=sd, universe_scores=universe_scores)
+        context = compute_context_score(ticker, screen_date=sd, universe_scores=universe_scores)
         formatted = format_context_output(context)
         rows.append(
             {

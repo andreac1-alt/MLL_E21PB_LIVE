@@ -23,7 +23,7 @@ Lo script:
 - chiede la `SD` con prompt
 - suggerisce la prima `SD` per cui non vede screening completi
 - lancia `1_run_day.py` sulla `SD`
-- risolve la seduta precedente alla `SD` tramite market calendar NYSE
+- usa la stessa data anche come `BD`
 - lancia `2_run_trade_state_day.py` su quella data
 - lancia `3_build_portfolio_day.py` su quella data
 - controlla la continuita' della sequenza `BD`, permettendo il rerun di una `BD` gia' prodotta
@@ -31,13 +31,13 @@ Lo script:
 Questo wrapper e' il flusso normale quando si opera "oggi":
 
 - si fa screening sull'ultima `SD` disponibile
-- si aggiorna il portfolio sull'ultima seduta completamente osservabile, cioe' la seduta precedente alla `SD`
+- si aggiorna trade state e portfolio sulla stessa data operativa del prompt
 
 Nota importante:
 
-- nel sistema generale la `BD` canonica di una `SD` resta la prima seduta di mercato successiva
-- `scripts/run_live_sd.py` non usa quella relazione canonica per il portfolio update del giorno corrente
-- la data usata dal wrapper va comunque risolta via market calendar NYSE
+- nel sistema generale la `BD` canonica di una `SD` e', per calendario di mercato, la prima seduta successiva e, viceversa, la `SD` canonica di una `BD` e' la seduta precedente che la genera
+- `scripts/run_live_sd.py` usa ora `BD = SD`
+- step 2 e step 3 risalgono poi autonomamente alla `SD` concatenata che genera quella `BD`
 
 ## Step 1 - Screening
 
@@ -66,7 +66,7 @@ Input:
 
 Lo script ricava da solo:
 
-- lo snapshot `trade_state` della seduta precedente
+- lo snapshot `trade_state` della `BD` precedente
 - le `SD` che mappano alla `BD`
 - i `second_screen_passed` collegati a quelle `SD`
 - le barre prezzo necessarie dalla cache locale
@@ -108,13 +108,13 @@ Responsabilita':
 
 Output:
 
-- `output/portfolio_live/full/<strategy_id>/<variant_id>/portfolio_positions_daily.csv`
-- `output/portfolio_live/full/<strategy_id>/<variant_id>/portfolio_actions_daily.csv`
-- `output/portfolio_live/full/<strategy_id>/<variant_id>/portfolio_state_daily.csv`
+- `output/portfolio_live/full/MLL_PB/base/portfolio_positions_daily.csv`
+- `output/portfolio_live/full/MLL_PB/base/portfolio_actions_daily.csv`
+- `output/portfolio_live/full/MLL_PB/base/portfolio_state_daily.csv`
 
-Variante di test del nuovo layer:
+Variante live corrente:
 
-`portfolio_live_trade_state_2026_no_carry_in`
+`base`
 
 ## App Operativa
 

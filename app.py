@@ -27,8 +27,8 @@ PORTFOLIO_DIR = (
     OUTPUT_DIR
     / "portfolio_live"
     / "full"
-    / "EMA21_SMA50"
-    / "portfolio_live_trade_state_2026_no_carry_in"
+    / "MLL_PB"
+    / "base"
 )
 POSITIONS_PATH = PORTFOLIO_DIR / "portfolio_positions_daily.csv"
 ACTIONS_PATH = PORTFOLIO_DIR / "portfolio_actions_daily.csv"
@@ -44,8 +44,8 @@ OFFICIAL_SIZING_SMA20_P20_ADD = 0.25
 OFFICIAL_SIZING_SMA20_P10_ADD = 0.50
 ETF_SCORE_PASS_MULTIPLIER = 1.25
 ETF_SCORE_FAIL_MULTIPLIER = 0.50
-DEFAULT_STRATEGY_ID = "EMA21_SMA50"
-DEFAULT_VARIANT_ID = "portfolio_live_trade_state_2026_no_carry_in"
+DEFAULT_STRATEGY_ID = "MLL_PB"
+DEFAULT_VARIANT_ID = "base"
 
 
 def configure_page() -> None:
@@ -474,7 +474,7 @@ def format_second_screen_param_chips(config: SecondScreenConfig) -> str:
 
 def render_screening_count_history_chart(
     *,
-    target_date: pd.Timestamp,
+    screen_date: pd.Timestamp,
     count_col: str,
     title: str,
     key_prefix: str,
@@ -484,7 +484,7 @@ def render_screening_count_history_chart(
         st.info("Storico screening non disponibile.")
         return
 
-    target_ts = pd.Timestamp(target_date).normalize()
+    target_ts = pd.Timestamp(screen_date).normalize()
     min_ts = history_df["screen_date"].min()
     max_ts = history_df["screen_date"].max()
     default_end_ts = min(target_ts, max_ts)
@@ -552,13 +552,13 @@ def render_screening_count_history_chart(
     st.altair_chart(chart, use_container_width=True)
 
 
-def render_second_screen_last_90_days_chart(target_date: pd.Timestamp) -> None:
+def render_second_screen_last_90_days_chart(screen_date: pd.Timestamp) -> None:
     history_df = load_screening_history()
     if history_df.empty or "second_screen_count" not in history_df.columns:
         st.info("Storico second screen non disponibile.")
         return
 
-    target_ts = pd.Timestamp(target_date).normalize()
+    target_ts = pd.Timestamp(screen_date).normalize()
     chart_df = history_df.loc[
         history_df["screen_date"] <= target_ts,
         ["screen_date", "second_screen_count"],
@@ -760,7 +760,7 @@ def render_second_screen_tab() -> None:
         )
 
     render_screening_count_history_chart(
-        target_date=selected_sd,
+        screen_date=selected_sd,
         count_col="second_screen_count",
         title="Storico Second Screen Count",
         key_prefix="second_screen_count",
@@ -1532,8 +1532,8 @@ def render_trade_console_tab() -> None:
     if analysis_row:
         summary_fields = [
             "ticker",
-            "requested_target_date",
-            "effective_target_date",
+            "requested_screen_date",
+            "effective_screen_date",
             "passed_second_screen",
             "semaforo_color",
             "blue_on",

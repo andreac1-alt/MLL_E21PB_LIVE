@@ -13,13 +13,13 @@ OPERATIONAL_UNIVERSE_MONTHLY_DIR = (
 BENCHMARK_OVERRIDE_TICKERS = ["SPY", "QQQ"]
 
 
-def operational_universe_monthly_path(target_date: pd.Timestamp) -> Path:
-    month_label = pd.Timestamp(target_date).strftime("%Y-%m")
+def operational_universe_monthly_path(screen_date: pd.Timestamp) -> Path:
+    month_label = pd.Timestamp(screen_date).strftime("%Y-%m")
     return OPERATIONAL_UNIVERSE_MONTHLY_DIR / f"operational_universe_{month_label}.csv"
 
 
-def load_operational_universe_for_date(target_date: pd.Timestamp) -> pd.DataFrame:
-    target_ts = pd.Timestamp(target_date).normalize()
+def load_operational_universe_for_date(screen_date: pd.Timestamp) -> pd.DataFrame:
+    target_ts = pd.Timestamp(screen_date).normalize()
     path = operational_universe_monthly_path(target_ts)
     if not path.exists():
         raise FileNotFoundError(

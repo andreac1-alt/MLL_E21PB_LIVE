@@ -9,8 +9,8 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_STRATEGY_ID = "EMA21_SMA50"
-DEFAULT_VARIANT_ID = "portfolio_live_trade_state_2026_no_carry_in"
+DEFAULT_STRATEGY_ID = "MLL_PB"
+DEFAULT_VARIANT_ID = "base"
 DEFAULT_MARKET_CALENDAR = "NYSE"
 
 

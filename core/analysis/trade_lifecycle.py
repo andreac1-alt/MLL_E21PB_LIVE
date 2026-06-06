@@ -100,9 +100,9 @@ def load_progress_df(strategy: str, start_year: int, end_year: int) -> pd.DataFr
         return pd.DataFrame()
 
     progress_df = pd.concat(rows, ignore_index=True)
-    if "screen_date" in progress_df.columns and "target_date" not in progress_df.columns:
-        progress_df["target_date"] = progress_df["screen_date"]
-    progress_df["target_date"] = pd.to_datetime(progress_df["target_date"], errors="coerce").dt.normalize()
+    if "screen_date" not in progress_df.columns and "target_date" in progress_df.columns:
+        progress_df["screen_date"] = progress_df["target_date"]
+    progress_df["screen_date"] = pd.to_datetime(progress_df["screen_date"], errors="coerce").dt.normalize()
     progress_df["buy_date"] = pd.to_datetime(progress_df["buy_date"], errors="coerce").dt.normalize()
     progress_df["executed_trades_count"] = (
         pd.to_numeric(progress_df["executed_trades_count"], errors="coerce").fillna(0).astype(int)
@@ -116,7 +116,7 @@ def load_progress_df(strategy: str, start_year: int, end_year: int) -> pd.DataFr
     progress_df["second_screen_count"] = (
         pd.to_numeric(progress_df["second_screen_count"], errors="coerce").fillna(0).astype(int)
     )
-    progress_df = progress_df.dropna(subset=["target_date", "buy_date"]).sort_values("target_date")
+    progress_df = progress_df.dropna(subset=["screen_date", "buy_date"]).sort_values("screen_date")
     progress_df = progress_df.reset_index(drop=True)
     return progress_df
 
@@ -129,7 +129,9 @@ def load_entry_trade_source_df(strategy: str, start_year: int, end_year: int) ->
     if df.empty:
         return pd.DataFrame()
 
-    df["source_target_date"] = pd.to_datetime(df["source_target_date"], errors="coerce").dt.normalize()
+    if "source_screen_date" not in df.columns and "source_target_date" in df.columns:
+        df["source_screen_date"] = df["source_target_date"]
+    df["source_screen_date"] = pd.to_datetime(df["source_screen_date"], errors="coerce").dt.normalize()
     bd_source_col = "bd" if "bd" in df.columns else "requested_buy_date"
     effective_bd_source_col = "effective_bd" if "effective_bd" in df.columns else "effective_entry_date"
     df["bd"] = pd.to_datetime(df[bd_source_col], errors="coerce").dt.normalize()
@@ -140,13 +142,13 @@ def load_entry_trade_source_df(strategy: str, start_year: int, end_year: int) ->
     df["second_screen_count"] = pd.to_numeric(df["second_screen_count"], errors="coerce")
     df["selected_count"] = pd.to_numeric(df["selected_count"], errors="coerce")
     df["source_ema21_slope_pct_5"] = pd.to_numeric(df["source_ema21_slope_pct_5"], errors="coerce")
-    df = df.dropna(subset=["source_target_date", "bd", "ticker"])
+    df = df.dropna(subset=["source_screen_date", "bd", "ticker"])
     df = df[
-        (df["source_target_date"].dt.year >= int(start_year))
-        & (df["source_target_date"].dt.year <= int(end_year))
+        (df["source_screen_date"].dt.year >= int(start_year))
+        & (df["source_screen_date"].dt.year <= int(end_year))
     ].copy()
     df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
-    return df.sort_values(["source_target_date", "selection_rank", "ticker"]).reset_index(drop=True)
+    return df.sort_values(["source_screen_date", "selection_rank", "ticker"]).reset_index(drop=True)
 
 
 def extract_trade_records(progress_row: pd.Series) -> list[dict[str, object]]:
@@ -374,10 +376,10 @@ def build_lifecycle_rows(
     trade_record: dict[str, object],
 ) -> list[dict[str, object]]:
     bd = pd.Timestamp(progress_row["buy_date"]).normalize()
-    target_date = pd.Timestamp(progress_row["target_date"]).normalize()
+    screen_date = pd.Timestamp(progress_row["screen_date"]).normalize()
     ticker = str(trade_record["ticker"])
     final_trade_r = trade_record["final_trade_r"]
-    source_event_id = f"{strategy}|{target_date.strftime('%Y-%m-%d')}|{bd.strftime('%Y-%m-%d')}"
+    source_event_id = f"{strategy}|{screen_date.strftime('%Y-%m-%d')}|{bd.strftime('%Y-%m-%d')}"
 
     legs_df, effective_bd = load_trade_legs_df_for_bd(bd, ticker)
     close_history = load_close_history(ticker)
@@ -467,7 +469,7 @@ def build_lifecycle_rows(
                 "strategy": strategy,
                 "ticker": ticker,
                 "source_event_id": source_event_id,
-                "source_target_date": target_date.strftime("%Y-%m-%d"),
+                "source_screen_date": screen_date.strftime("%Y-%m-%d"),
                 "bd": bd.strftime("%Y-%m-%d"),
                 "trade_index": int(trade_record["trade_index"]),
                 "risk_amount": round(risk_amount, 4),
@@ -512,10 +514,10 @@ def build_lifecycle_rows_from_entry_trade_row(
 ) -> list[dict[str, object]]:
     bd_source_col = "bd" if "bd" in entry_row.index else "requested_buy_date"
     bd = pd.Timestamp(entry_row[bd_source_col]).normalize()
-    target_date = pd.Timestamp(entry_row["source_target_date"]).normalize()
+    screen_date = pd.Timestamp(entry_row["source_screen_date"]).normalize()
     ticker = str(entry_row["ticker"]).strip().upper()
     trade_index = pd.to_numeric(entry_row.get("selection_rank"), errors="coerce")
-    source_event_id = f"{strategy}|{target_date.strftime('%Y-%m-%d')}|{bd.strftime('%Y-%m-%d')}|{ticker}"
+    source_event_id = f"{strategy}|{screen_date.strftime('%Y-%m-%d')}|{bd.strftime('%Y-%m-%d')}|{ticker}"
     legs_df, effective_bd = load_trade_legs_frozen_df_for_bd(strategy, bd, ticker)
     close_history = load_close_history(ticker)
     summary_row = load_trade_summary_frozen_row_for_bd(strategy, bd, ticker)
@@ -606,7 +608,7 @@ def build_lifecycle_rows_from_entry_trade_row(
                 "strategy": strategy,
                 "ticker": ticker,
                 "source_event_id": source_event_id,
-                "source_target_date": target_date.strftime("%Y-%m-%d"),
+                "source_screen_date": screen_date.strftime("%Y-%m-%d"),
                 "bd": bd.strftime("%Y-%m-%d"),
                 "trade_index": int(trade_index) if pd.notna(trade_index) else None,
                 "risk_amount": round(risk_amount, 4),
@@ -659,8 +661,10 @@ def build_portfolio_state_df(lifecycle_df: pd.DataFrame, strategy: str) -> pd.Da
 
     lifecycle_df = lifecycle_df.copy()
     lifecycle_df["date"] = pd.to_datetime(lifecycle_df["date"], errors="coerce").dt.normalize()
-    lifecycle_df["source_target_date"] = pd.to_datetime(
-        lifecycle_df["source_target_date"], errors="coerce"
+    if "source_screen_date" not in lifecycle_df.columns and "source_target_date" in lifecycle_df.columns:
+        lifecycle_df["source_screen_date"] = lifecycle_df["source_target_date"]
+    lifecycle_df["source_screen_date"] = pd.to_datetime(
+        lifecycle_df["source_screen_date"], errors="coerce"
     ).dt.normalize()
     lifecycle_df["bd"] = pd.to_datetime(
         lifecycle_df["bd"], errors="coerce"

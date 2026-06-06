@@ -9,8 +9,8 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_STRATEGY_ID = "EMA21_SMA50"
-DEFAULT_VARIANT_ID = "portfolio_live_trade_state_2026_no_carry_in"
+DEFAULT_STRATEGY_ID = "MLL_PB"
+DEFAULT_VARIANT_ID = "base"
 DEFAULT_MARKET_CALENDAR = "NYSE"
 
 
@@ -93,20 +93,6 @@ def prompt_screen_date() -> pd.Timestamp:
     if pd.isna(parsed):
         raise SystemExit(f"SD non valida: {raw}")
     return pd.Timestamp(parsed).normalize()
-
-
-def previous_market_session(before_date: pd.Timestamp) -> pd.Timestamp:
-    import pandas_market_calendars as mcal
-
-    normalized = pd.Timestamp(before_date).normalize()
-    schedule = mcal.get_calendar(DEFAULT_MARKET_CALENDAR).schedule(
-        start_date=normalized - pd.Timedelta(days=14),
-        end_date=normalized - pd.Timedelta(days=1),
-    )
-    sessions = [pd.Timestamp(session_date).normalize() for session_date in schedule.index]
-    if not sessions:
-        raise SystemExit(f"Nessuna seduta precedente trovata prima di {normalized.strftime('%Y-%m-%d')}.")
-    return sessions[-1]
 
 
 def next_market_session(after_date: pd.Timestamp) -> pd.Timestamp:
@@ -197,8 +183,8 @@ def run_trade_step(label: str, script_name: str, buy_date: pd.Timestamp) -> None
 
 def main() -> None:
     screen_date = prompt_screen_date()
-    buy_date = previous_market_session(screen_date)
-    print(f"BD precedente alla SD {screen_date.strftime('%Y-%m-%d')}: {buy_date.strftime('%Y-%m-%d')}", flush=True)
+    buy_date = pd.Timestamp(screen_date).normalize()
+    print(f"BD usata per trade_state/portfolio: {buy_date.strftime('%Y-%m-%d')}", flush=True)
     validate_sequence(screen_date, buy_date)
     run_screen_day(screen_date)
     run_trade_step("STEP 2 trade_state", "2_run_trade_state_day.py", buy_date)

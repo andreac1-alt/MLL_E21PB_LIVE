@@ -59,28 +59,32 @@ Il wrapper operativo principale e' `scripts/run_live_sd.py`:
 - chiede la `SD`
 - propone la prima `SD` senza screening completi
 - esegue lo screening sulla `SD`
-- aggiorna trade state e portfolio sulla seduta precedente alla `SD`
+- usa la stessa data anche come `BD`
+- aggiorna trade state e portfolio su quella `BD`
 - verifica la continuita' della sequenza
 
 Nota sulla semantica temporale:
 
-- nel sistema generale la `BD` canonica di una `SD` e' la prima seduta di mercato successiva
-- `scripts/run_live_sd.py` e' un wrapper operativo diverso: usa la `SD` per lo screening corrente e la seduta precedente come data di aggiornamento portfolio
-- la seduta precedente va comunque risolta tramite market calendar NYSE, senza scorciatoie tipo `+1 day` o fallback locali
+- nel sistema generale la `BD` canonica di una `SD` e' la prima seduta di mercato successiva e, viceversa, la `SD` canonica di una `BD` e' la seduta di mercato precedente che la genera
+- `scripts/run_live_sd.py` usa `BD = SD`
+- step 2 e step 3 risalgono autonomamente alla `SD` concatenata che genera quella `BD`
+- la relazione canonica `SD -> BD` del sistema resta comunque risolta tramite market calendar NYSE, senza scorciatoie tipo `+1 day` o fallback locali
 
 Per rilanciare solo portfolio/trade state su una `BD` specifica resta disponibile
 `scripts/run_live_bd.py`.
 
-La prima variante operativa del nuovo layer e':
+La variante operativa corrente del layer live e':
 
-`portfolio_live_trade_state_2026_no_carry_in`
+`base`
 
 ## Layer Legacy
 
 Il vecchio layer `trading_day` e gli script `run_trading_day.py` /
-`run_trading_day_live.py` sono stati archiviati in:
+`run_trading_day_live.py` sono stati archiviati per sola consultazione storica.
 
-`output/archivio/20260602_pipeline_legacy/`
+Il backup operativo piu' recente pre-rerun vive invece in:
+
+`archivio/20260606_114225/`
 
 Motivo:
 

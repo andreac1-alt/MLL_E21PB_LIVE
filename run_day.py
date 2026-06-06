@@ -9,7 +9,7 @@ from core.screening.first_screen import (
     FirstScreenRunResult,
     print_first_screen_run_summary,
     prompt_sample_size,
-    prompt_target_date,
+    prompt_screen_date,
     run_first_screen_for_date,
 )
 from core.market.market import load_cached_price_history_any_end
@@ -28,21 +28,13 @@ class RunDayResult:
     first_screen: FirstScreenRunResult
     second_screen: SecondScreenRunResult
 
-    @property
-    def requested_target_date(self) -> pd.Timestamp:
-        return self.requested_screen_date
-
-    @property
-    def target_date(self) -> pd.Timestamp:
-        return self.screen_date
-
 
 def resolve_effective_screen_date(
     requested_screen_date: pd.Timestamp,
 ) -> pd.Timestamp:
     history = load_cached_price_history_any_end("SPY", config=FirstScreenConfig())
     if history is None or history.empty:
-        raise ValueError("Cache SPY non disponibile per risolvere la data target effettiva.")
+        raise ValueError("Cache SPY non disponibile per risolvere la screen date effettiva.")
 
     trading_dates = pd.Index(pd.to_datetime(history.index)).sort_values().unique()
     requested_ts = pd.Timestamp(requested_screen_date).normalize()
@@ -59,16 +51,13 @@ def run_day(
     sample_size: int | None = None,
     first_screen_config: FirstScreenConfig | None = None,
     second_screen_config: SecondScreenConfig | None = None,
-    target_date: pd.Timestamp | None = None,
 ) -> RunDayResult:
     if screen_date is None:
-        if target_date is None:
-            raise ValueError("screen_date obbligatoria.")
-        screen_date = target_date
+        raise ValueError("screen_date obbligatoria.")
     requested_screen_date = pd.Timestamp(screen_date).normalize()
     effective_screen_date = resolve_effective_screen_date(requested_screen_date)
     first_screen_result = run_first_screen_for_date(
-        target_date=effective_screen_date,
+        screen_date=effective_screen_date,
         sample_size=sample_size,
         config=first_screen_config,
     )
@@ -100,7 +89,7 @@ def print_run_day_summary(result: RunDayResult) -> None:
 
 
 def main() -> None:
-    screen_date = prompt_target_date()
+    screen_date = prompt_screen_date()
     sample_size = prompt_sample_size()
     result = run_day(screen_date=screen_date, sample_size=sample_size)
     print_run_day_summary(result)

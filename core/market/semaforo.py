@@ -34,7 +34,7 @@ def compute_linear_slope(values: pd.Series) -> float:
 
 @dataclass
 class MarketStreetLightResult:
-    target_date: pd.Timestamp
+    screen_date: pd.Timestamp
     ticker: str
     rule_5dma: bool
     rule_daily_buy: bool
@@ -105,17 +105,17 @@ def build_weekly_from_daily(daily_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def compute_market_street_light_for_date(
-    target_date: pd.Timestamp,
+    screen_date: pd.Timestamp,
     ticker: str = DEFAULT_TICKER,
     daily_df: pd.DataFrame | None = None,
 ) -> MarketStreetLightResult:
     history = daily_df.copy() if daily_df is not None else load_daily_history_from_cache(ticker)
     history = filter_confirmed_daily_history(history)
-    scoped = history.loc[:target_date].copy()
+    scoped = history.loc[:screen_date].copy()
 
     if len(scoped) < 30:
         raise ValueError(
-            f"Non ci sono abbastanza dati daily per calcolare il semaforo su {target_date.date()}."
+            f"Non ci sono abbastanza dati daily per calcolare il semaforo su {screen_date.date()}."
         )
 
     scoped["SMA5"] = scoped["Close"].rolling(5).mean()
@@ -137,7 +137,7 @@ def compute_market_street_light_for_date(
     weekly = build_weekly_from_daily(scoped)
     if len(weekly) < 20:
         raise ValueError(
-            f"Non ci sono abbastanza dati weekly per calcolare il semaforo su {target_date.date()}."
+            f"Non ci sono abbastanza dati weekly per calcolare il semaforo su {screen_date.date()}."
         )
 
     weekly["SMA10"] = weekly["Close"].rolling(10).mean()
@@ -157,7 +157,7 @@ def compute_market_street_light_for_date(
     )
 
     return MarketStreetLightResult(
-        target_date=target_date.normalize(),
+        screen_date=screen_date.normalize(),
         ticker=ticker,
         rule_5dma=rule_5dma,
         rule_daily_buy=rule_daily_buy,
@@ -175,7 +175,7 @@ def compute_market_street_light_for_date(
 
 
 def compute_blue_on_for_date(
-    target_date: pd.Timestamp,
+    screen_date: pd.Timestamp,
     *,
     ticker: str = DEFAULT_TICKER,
     lookback_days: int = 30,
@@ -184,7 +184,7 @@ def compute_blue_on_for_date(
     history = daily_df.copy() if daily_df is not None else load_daily_history_from_cache(ticker)
     history = filter_confirmed_daily_history(history)
     trading_dates = pd.Index(pd.to_datetime(history.index)).sort_values().unique()
-    target_ts = pd.Timestamp(target_date).normalize()
+    target_ts = pd.Timestamp(screen_date).normalize()
     current_idx = trading_dates.searchsorted(target_ts, side="left")
     if current_idx >= len(trading_dates) or pd.Timestamp(trading_dates[current_idx]).normalize() != target_ts:
         current_idx = trading_dates.searchsorted(target_ts, side="right") - 1
@@ -206,10 +206,10 @@ def compute_blue_on_for_date(
 
 
 def main() -> None:
-    target_date = pd.Timestamp.today().normalize()
-    result = compute_market_street_light_for_date(target_date)
+    screen_date = pd.Timestamp.today().normalize()
+    result = compute_market_street_light_for_date(screen_date)
     print(f"Ticker reference: {result.ticker}")
-    print(f"Target date: {result.target_date.strftime('%Y-%m-%d')}")
+    print(f"Screen date: {result.screen_date.strftime('%Y-%m-%d')}")
     print(f"Rule 5DMA: {result.rule_5dma}")
     print(f"Rule daily buy: {result.rule_daily_buy}")
     print(f"Rule weekly buy: {result.rule_weekly_buy}")

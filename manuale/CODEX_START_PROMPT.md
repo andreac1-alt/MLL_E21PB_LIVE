@@ -19,7 +19,7 @@ Prima di lavorare, orientati leggendo questi file:
 
 Stato architetturale importante:
 la vecchia pipeline basata su run_trading_day.py, run_trading_day_live.py e output/trading_day e' stata archiviata in:
-output/archivio/20260602_pipeline_legacy/
+archivio/
 
 Non usare il vecchio layer trading_day come fonte operativa live, salvo per consultazione storica.
 
@@ -29,7 +29,7 @@ Pipeline canonica nuova:
    - chiede la SD
    - suggerisce la prima SD senza screening completi
    - lancia step 1 sulla SD
-   - risolve la seduta precedente alla SD via market calendar NYSE
+   - usa la stessa data anche come BD
    - lancia step 2 e step 3 sulla BD
    - comando:
      venv/bin/python scripts/run_live_sd.py
@@ -89,8 +89,9 @@ Terminologia obbligatoria:
 - BD = buy date
 
 Regola temporale da ricordare:
-- nel sistema generale la `BD` canonica di una `SD` e' la prima seduta di mercato successiva
-- dentro `scripts/run_live_sd.py` si usa invece la seduta precedente alla `SD` come data di update portfolio, perche' e' l'ultima seduta completamente osservabile
+- nel sistema generale la `BD` canonica di una `SD` e' la prima seduta di mercato successiva e, viceversa, la `SD` canonica di una `BD` e' la seduta di mercato precedente che la genera
+- dentro `scripts/run_live_sd.py` si usa `BD = SD`
+- step 2 e step 3 risalgono poi autonomamente alla `SD` concatenata che genera quella `BD`
 
 Non usare target_date quando stai parlando della pipeline live trade/portfolio, a meno che tu stia citando codice legacy che usa ancora quel nome.
 

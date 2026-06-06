@@ -200,7 +200,9 @@ def load_trade_lifecycle_df(
     df = pd.read_csv(path)
     if df.empty:
         return df
-    for col in ["date", "source_target_date"]:
+    if "source_screen_date" not in df.columns and "source_target_date" in df.columns:
+        df["source_screen_date"] = df["source_target_date"]
+    for col in ["date", "source_screen_date"]:
         df[col] = pd.to_datetime(df[col], errors="coerce").dt.normalize()
     bd_source_col = "bd" if "bd" in df.columns else "entry_date" if "entry_date" in df.columns else None
     if bd_source_col is None:
@@ -219,7 +221,7 @@ def load_trade_lifecycle_df(
     ]
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df.dropna(subset=["date", "bd", "source_target_date", "ticker"]).copy()
+    return df.dropna(subset=["date", "bd", "source_screen_date", "ticker"]).copy()
 
 
 def load_storico_spy_df() -> pd.DataFrame:
@@ -233,17 +235,17 @@ def load_storico_spy_df() -> pd.DataFrame:
 
 
 @lru_cache(maxsize=None)
-def resolve_blue_on_for_source_date(source_target_date_str: str) -> bool:
-    source_target_date = pd.Timestamp(source_target_date_str).normalize()
-    semaphore = compute_market_street_light_for_date(source_target_date)
+def resolve_blue_on_for_source_screen_date(source_screen_date_str: str) -> bool:
+    source_screen_date = pd.Timestamp(source_screen_date_str).normalize()
+    semaphore = compute_market_street_light_for_date(source_screen_date)
     return bool(getattr(semaphore, "blue_on", False))
 
 
 @lru_cache(maxsize=None)
-def load_second_screen_passed_df(target_date_str: str) -> pd.DataFrame:
-    target_date = pd.Timestamp(target_date_str).normalize()
-    stamp = target_date.strftime("%Y%m%d")
-    second_path = resolve_archive_file(target_date, f"second_screen_passed_{stamp}.csv")
+def load_second_screen_passed_df(screen_date_str: str) -> pd.DataFrame:
+    screen_date = pd.Timestamp(screen_date_str).normalize()
+    stamp = screen_date.strftime("%Y%m%d")
+    second_path = resolve_archive_file(screen_date, f"second_screen_passed_{stamp}.csv")
     if not second_path.exists():
         return pd.DataFrame(columns=["ticker", "ema21_slope_pct_5"])
     df = pd.read_csv(second_path, usecols=["ticker", "ema21_slope_pct_5"])
@@ -256,20 +258,20 @@ def load_second_screen_passed_df(target_date_str: str) -> pd.DataFrame:
 
 def build_entry_slope_df(entry_rows: pd.DataFrame) -> pd.DataFrame:
     unique_dates = (
-        entry_rows["source_target_date"]
+        entry_rows["source_screen_date"]
         .dropna()
         .drop_duplicates()
         .sort_values()
     )
     rows: list[pd.DataFrame] = []
-    for source_target_date in unique_dates:
-        second_df = load_second_screen_passed_df(source_target_date.strftime("%Y-%m-%d")).copy()
+    for source_screen_date in unique_dates:
+        second_df = load_second_screen_passed_df(source_screen_date.strftime("%Y-%m-%d")).copy()
         if second_df.empty:
             continue
-        second_df["source_target_date"] = pd.Timestamp(source_target_date).normalize()
-        rows.append(second_df[["source_target_date", "ticker", "ema21_slope_pct_5"]])
+        second_df["source_screen_date"] = pd.Timestamp(source_screen_date).normalize()
+        rows.append(second_df[["source_screen_date", "ticker", "ema21_slope_pct_5"]])
     if not rows:
-        return pd.DataFrame(columns=["source_target_date", "ticker", "ema21_slope_pct_5"])
+        return pd.DataFrame(columns=["source_screen_date", "ticker", "ema21_slope_pct_5"])
     return pd.concat(rows, ignore_index=True)
 
 
@@ -295,17 +297,17 @@ def load_invested_only_momentum_signal_df() -> pd.DataFrame:
 @lru_cache(maxsize=1)
 def load_breadth_signal_df() -> pd.DataFrame:
     if not BREADTH_DAILY_PATH.exists():
-        return pd.DataFrame(columns=["source_target_date", "above_sma5_pct", "above_sma20_pct"])
+        return pd.DataFrame(columns=["source_screen_date", "above_sma5_pct", "above_sma20_pct"])
     df = pd.read_csv(BREADTH_DAILY_PATH, usecols=["date", "above_sma5_pct", "above_sma20_pct"])
     if df.empty:
-        return pd.DataFrame(columns=["source_target_date", "above_sma5_pct", "above_sma20_pct"])
-    df["source_target_date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
+        return pd.DataFrame(columns=["source_screen_date", "above_sma5_pct", "above_sma20_pct"])
+    df["source_screen_date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
     df["above_sma5_pct"] = pd.to_numeric(df["above_sma5_pct"], errors="coerce")
     df["above_sma20_pct"] = pd.to_numeric(df["above_sma20_pct"], errors="coerce")
-    return df.dropna(subset=["source_target_date"])[
-        ["source_target_date", "above_sma5_pct", "above_sma20_pct"]
+    return df.dropna(subset=["source_screen_date"])[
+        ["source_screen_date", "above_sma5_pct", "above_sma20_pct"]
     ].drop_duplicates(
-        subset=["source_target_date"],
+        subset=["source_screen_date"],
         keep="last",
     )
 
@@ -340,7 +342,7 @@ def apply_breadth_additive_sizing(result: pd.DataFrame, config: dict) -> pd.Data
     if breadth_df.empty or metric not in breadth_df.columns:
         return result
 
-    result = result.merge(breadth_df[["source_target_date", metric]], on="source_target_date", how="left")
+    result = result.merge(breadth_df[["source_screen_date", metric]], on="source_screen_date", how="left")
     result[metric] = pd.to_numeric(result[metric], errors="coerce")
     p20_threshold = float(config["breadth_p20_threshold"])
     p10_threshold = float(config["breadth_p10_threshold"])
@@ -360,15 +362,15 @@ def apply_breadth_additive_sizing(result: pd.DataFrame, config: dict) -> pd.Data
 
 def assign_r_multiplier(entry_rows: pd.DataFrame, variant_id: str) -> pd.DataFrame:
     result = entry_rows.copy()
-    result["source_target_date"] = pd.to_datetime(result["source_target_date"], errors="coerce").dt.normalize()
+    result["source_screen_date"] = pd.to_datetime(result["source_screen_date"], errors="coerce").dt.normalize()
     result["bd"] = pd.to_datetime(result["bd"], errors="coerce").dt.normalize()
     result["r_multiplier"] = 1.0
     if variant_id not in SLOPE_SIZING_VARIANTS:
         return result
 
     slope_df = build_entry_slope_df(result)
-    slope_df["source_target_date"] = pd.to_datetime(slope_df["source_target_date"], errors="coerce").dt.normalize()
-    result = result.merge(slope_df, on=["source_target_date", "ticker"], how="left")
+    slope_df["source_screen_date"] = pd.to_datetime(slope_df["source_screen_date"], errors="coerce").dt.normalize()
+    result = result.merge(slope_df, on=["source_screen_date", "ticker"], how="left")
     result["ema21_slope_pct_5"] = pd.to_numeric(result["ema21_slope_pct_5"], errors="coerce")
 
     config = SLOPE_SIZING_VARIANTS[variant_id]
@@ -418,7 +420,7 @@ def assign_r_multiplier(entry_rows: pd.DataFrame, variant_id: str) -> pd.DataFra
 
 def build_position_index(lifecycle_df: pd.DataFrame) -> pd.DataFrame:
     entry_rows = lifecycle_df[lifecycle_df["is_entry_day"]].copy()
-    entry_rows = entry_rows.sort_values(["ticker", "bd", "source_target_date", "trade_index", "source_event_id"])
+    entry_rows = entry_rows.sort_values(["ticker", "bd", "source_screen_date", "trade_index", "source_event_id"])
     entry_rows["entry_seq"] = (
         entry_rows.groupby(["ticker", "bd"]).cumcount() + 1
     )
@@ -461,20 +463,20 @@ def filter_variant_positions(lifecycle_df: pd.DataFrame, variant_id: str) -> pd.
     entry_rows = lifecycle_df[lifecycle_df["is_entry_day"]].copy()
     storico_df = load_storico_spy_df().rename(
         columns={
-            "date": "source_target_date",
+            "date": "source_screen_date",
             "market_street_light": "source_market_street_light",
             "blue_on": "source_blue_on",
         }
     )
-    entry_rows = entry_rows.merge(storico_df, on="source_target_date", how="left")
+    entry_rows = entry_rows.merge(storico_df, on="source_screen_date", how="left")
     entry_rows["source_market_street_light"] = (
         entry_rows["source_market_street_light"].astype(str).str.strip().str.upper()
     )
     missing_blue_on_mask = entry_rows["source_blue_on"].isna()
     if missing_blue_on_mask.any():
         entry_rows.loc[missing_blue_on_mask, "source_blue_on"] = entry_rows.loc[
-            missing_blue_on_mask, "source_target_date"
-        ].dt.strftime("%Y-%m-%d").map(resolve_blue_on_for_source_date)
+            missing_blue_on_mask, "source_screen_date"
+        ].dt.strftime("%Y-%m-%d").map(resolve_blue_on_for_source_screen_date)
     entry_rows["source_blue_on"] = entry_rows["source_blue_on"].fillna(False).astype(bool)
     entry_rows["entry_weekday"] = entry_rows["bd"].dt.day_name().str.upper()
     entry_rows["semaforo_color_source"] = entry_rows["semaforo_color_source"].astype(str).str.strip().str.upper()
@@ -482,22 +484,22 @@ def filter_variant_positions(lifecycle_df: pd.DataFrame, variant_id: str) -> pd.
     if variant_id == "green_always":
         filtered = entry_rows.loc[
             entry_rows["semaforo_color_source"] == "GREEN",
-            ["source_event_id", "ticker", "bd", "source_target_date"],
+            ["source_event_id", "ticker", "bd", "source_screen_date"],
         ].copy()
     elif variant_id == "yellow_always":
         filtered = entry_rows.loc[
             entry_rows["semaforo_color_source"] == "YELLOW",
-            ["source_event_id", "ticker", "bd", "source_target_date"],
+            ["source_event_id", "ticker", "bd", "source_screen_date"],
         ].copy()
     elif variant_id == "red_always_top10":
         filtered = entry_rows.loc[
             entry_rows["semaforo_color_source"] == "RED",
-            ["source_event_id", "ticker", "bd", "source_target_date"],
+            ["source_event_id", "ticker", "bd", "source_screen_date"],
         ].copy()
     elif variant_id == "all_colors_always":
         filtered = entry_rows.loc[
             entry_rows["semaforo_color_source"].isin(["BLUE", "GREEN", "YELLOW", "RED"]),
-            ["source_event_id", "ticker", "bd", "source_target_date"],
+            ["source_event_id", "ticker", "bd", "source_screen_date"],
         ].copy()
     else:
         is_blue_source = entry_rows["semaforo_color_source"] == "BLUE"
@@ -506,7 +508,7 @@ def filter_variant_positions(lifecycle_df: pd.DataFrame, variant_id: str) -> pd.
 
         filtered = entry_rows.loc[
             is_blue_source & (is_non_monday_entry | keep_monday_entry),
-            ["source_event_id", "ticker", "bd", "source_target_date"],
+            ["source_event_id", "ticker", "bd", "source_screen_date"],
         ].copy()
 
     bds = (

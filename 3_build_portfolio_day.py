@@ -26,8 +26,8 @@ from core.trade_state import (
 from tools.strategy_EMA21_SMA50 import FIRST_TARGET_R_MULTIPLE, MIN_SHARES, build_tranche_sizes, load_cached_price_history
 
 
-DEFAULT_STRATEGY_ID = "EMA21_SMA50"
-DEFAULT_VARIANT_ID = "portfolio_live_trade_state_2026_no_carry_in"
+DEFAULT_STRATEGY_ID = "MLL_PB"
+DEFAULT_VARIANT_ID = "base"
 DEFAULT_BASE_RISK_AMOUNT = 25.0
 SLOPE_THRESHOLD = 0.45
 SLOPE_ADD = 0.25
@@ -87,7 +87,20 @@ def load_trade_state_for_bd(buy_date: pd.Timestamp) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Trade state non trovato per BD={buy_date.date()}: {path}")
     df = pd.read_csv(path, keep_default_na=False)
-    return normalize_trade_state_df(df)
+    return normalize_trade_state_for_portfolio(df)
+
+
+def normalize_trade_state_for_portfolio(df: pd.DataFrame) -> pd.DataFrame:
+    result = normalize_trade_state_df(df)
+    if result.empty:
+        result = result.copy()
+        result["bd"] = pd.Series(dtype="datetime64[ns]")
+        return result
+    result = result.copy()
+    entry_dates = pd.to_datetime(result["entry_date"], errors="coerce").dt.normalize()
+    buy_dates = pd.to_datetime(result["buy_date"], errors="coerce").dt.normalize()
+    result["bd"] = buy_dates.where(entry_dates.notna(), pd.NaT)
+    return result
 
 
 def load_existing_output(path: Path, columns: list[str]) -> pd.DataFrame:
@@ -405,7 +418,7 @@ def apply_sizing_dependent_trade_state_updates(
             updated.at[idx, "first_take_profit_date"] = normalized_bd
             updated.at[idx, "current_stop_loss"] = max(float(row["current_stop_loss"]), float(row["entry_price"]))
 
-    return normalize_trade_state_df(updated)
+    return normalize_trade_state_for_portfolio(updated)
 
 
 def build_r_multiplier_by_trade(
@@ -928,7 +941,7 @@ def build_portfolio_day(
 ) -> dict[str, object]:
     buy_date = pd.Timestamp(buy_date).normalize()
     current_df = load_trade_state_for_bd(buy_date)
-    previous_df = load_previous_trade_state(buy_date)
+    previous_df = normalize_trade_state_for_portfolio(load_previous_trade_state(buy_date))
 
     full_dir = get_portfolio_full_dir(strategy_id, variant_id, layer=layer)
     positions_existing = load_existing_output(full_dir / "portfolio_positions_daily.csv", PORTFOLIO_POSITIONS_DAILY_COLUMNS)

@@ -253,8 +253,8 @@ def recompute_second_screen_row(ticker: str, screen_date: pd.Timestamp) -> dict[
         ticker,
         history,
         SecondScreenConfig(),
-        requested_target_date=screen_date,
-        effective_target_date=screen_date,
+        requested_screen_date=screen_date,
+        effective_screen_date=screen_date,
         semaforo_color=semaforo_result.market_street_light,
         blue_on=blue_on,
         blue_on_weak_count=blue_on_weak_count,
@@ -308,9 +308,8 @@ def build_trade_console_payload(
     return {
         "ticker": ticker_label,
         "screen_date": screen_ts,
-        "target_date": screen_ts,
         "bd": buy_ts,
-        "etf_context": compute_context_score(ticker_label, target_date=screen_ts),
+        "etf_context": compute_context_score(ticker_label, screen_date=screen_ts),
         "analysis_row": analysis_row or {},
         "price_snapshot": price_snapshot,
         "reference_etf_snapshot": reference_etf_snapshot,
@@ -359,7 +358,7 @@ def build_estimated_trade_payload(
 
 def format_trade_console_payload(payload: dict[str, object]) -> str:
     ticker = str(payload["ticker"])
-    screen_date = pd.Timestamp(payload.get("screen_date", payload["target_date"])).strftime("%Y-%m-%d")
+    screen_date = pd.Timestamp(payload["screen_date"]).strftime("%Y-%m-%d")
     buy_date = pd.Timestamp(payload["bd"]).strftime("%Y-%m-%d")
     analysis = payload.get("analysis_row", {})
     price = payload.get("price_snapshot", {})
@@ -487,7 +486,7 @@ def build_buy_message(ticker: str, bd: pd.Timestamp) -> str:
     second_screen_row = find_second_screen_row_for_date(ticker_label, screen_ts)
     in_second_screen = second_screen_row is not None
     price_snapshot = get_target_day_price_snapshot(ticker_label, screen_ts)
-    etf_context = compute_context_score(ticker_label, target_date=screen_ts)
+    etf_context = compute_context_score(ticker_label, screen_date=screen_ts)
     etf_allowed = bool(getattr(etf_context, "allowed", False))
     etf_multiplier = ETF_SCORE_PASS_MULTIPLIER if etf_allowed else ETF_SCORE_FAIL_MULTIPLIER
     adjusted_risk_amount = float(DEFAULT_RISK_AMOUNT) * float(etf_multiplier)

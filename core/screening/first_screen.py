@@ -70,7 +70,7 @@ class FirstScreenConfig:
 
 @dataclass
 class FirstScreenRunResult:
-    target_date: pd.Timestamp
+    screen_date: pd.Timestamp
     universe_total: int
     universe_filtered: int
     cache_covered_before_run: int
@@ -123,8 +123,8 @@ ALLOWED_COMMON_STOCK_KEYWORDS = [
 ]
 
 
-def prompt_target_date() -> pd.Timestamp:
-    raw_value = input("Data target (YYYY-MM-DD): ").strip()
+def prompt_screen_date() -> pd.Timestamp:
+    raw_value = input("Screen date (YYYY-MM-DD): ").strip()
     try:
         return pd.Timestamp(raw_value).normalize()
     except Exception as exc:  # noqa: BLE001
@@ -187,8 +187,8 @@ def filter_universe(universe: pd.DataFrame) -> pd.DataFrame:
     return filtered.reset_index(drop=True)
 
 
-def compute_download_start(target_date: pd.Timestamp, config: FirstScreenConfig) -> str:
-    start = target_date - pd.Timedelta(days=config.history_buffer_days)
+def compute_download_start(screen_date: pd.Timestamp, config: FirstScreenConfig) -> str:
+    start = screen_date - pd.Timedelta(days=config.history_buffer_days)
     return start.strftime("%Y-%m-%d")
 
 
@@ -224,13 +224,13 @@ def analyze_ticker(
     history: pd.DataFrame,
     market_cap: float | None,
     cache_metadata: dict[str, Any] | None,
-    target_date: pd.Timestamp,
+    screen_date: pd.Timestamp,
     config: FirstScreenConfig,
 ) -> dict[str, Any] | None:
-    if history.empty or target_date not in history.index or not has_required_price_columns(history):
+    if history.empty or screen_date not in history.index or not has_required_price_columns(history):
         return None
 
-    scoped = history.loc[:target_date].copy()
+    scoped = history.loc[:screen_date].copy()
     history_sessions = len(scoped)
     if len(scoped) < config.sma50_window:
         return None
@@ -329,7 +329,7 @@ def analyze_ticker(
         "ticker": ticker,
         "exchange": exchange,
         "name": name,
-        "target_date": target_date.strftime("%Y-%m-%d"),
+        "screen_date": screen_date.strftime("%Y-%m-%d"),
         "market_cap": round_or_none(market_cap / 1_000_000_000 if market_cap else None),
         "market_cap_missing": market_cap_missing,
         "history_sessions": history_sessions,
@@ -366,15 +366,15 @@ def ensure_output_dir() -> None:
     BREADTH_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def dated_output_dir(target_date: pd.Timestamp) -> Path:
-    return archive_day_dir(target_date)
+def dated_output_dir(screen_date: pd.Timestamp) -> Path:
+    return archive_day_dir(screen_date)
 
 
-def archive_existing_outputs(target_date: pd.Timestamp) -> None:
+def archive_existing_outputs(screen_date: pd.Timestamp) -> None:
     ensure_output_dir()
     OUTPUT_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = target_date.strftime("%Y%m%d")
-    target_dir = dated_output_dir(target_date)
+    suffix = screen_date.strftime("%Y%m%d")
+    target_dir = dated_output_dir(screen_date)
     target_dir.mkdir(parents=True, exist_ok=True)
     existing_paths = [
         target_dir / f"first_screen_all_{suffix}.csv",
@@ -393,10 +393,10 @@ def archive_existing_outputs(target_date: pd.Timestamp) -> None:
         source_path.replace(archive_dir / source_path.name)
 
 
-def save_results(results_df: pd.DataFrame, passed_df: pd.DataFrame, target_date: pd.Timestamp) -> None:
+def save_results(results_df: pd.DataFrame, passed_df: pd.DataFrame, screen_date: pd.Timestamp) -> None:
     ensure_output_dir()
-    suffix = target_date.strftime("%Y%m%d")
-    target_dir = dated_output_dir(target_date)
+    suffix = screen_date.strftime("%Y%m%d")
+    target_dir = dated_output_dir(screen_date)
     target_dir.mkdir(parents=True, exist_ok=True)
     results_to_save = results_df.copy()
     passed_to_save = passed_df.copy()
@@ -408,20 +408,20 @@ def save_results(results_df: pd.DataFrame, passed_df: pd.DataFrame, target_date:
     passed_to_save.to_csv(target_dir / f"first_screen_passed_{suffix}.csv", index=False)
 
 
-def save_breadth_universe_snapshot(filtered_universe: pd.DataFrame, target_date: pd.Timestamp) -> Path:
+def save_breadth_universe_snapshot(filtered_universe: pd.DataFrame, screen_date: pd.Timestamp) -> Path:
     ensure_output_dir()
-    snapshot_dir = BREADTH_SNAPSHOTS_DIR / target_date.strftime("%Y-%m-%d")
+    snapshot_dir = BREADTH_SNAPSHOTS_DIR / screen_date.strftime("%Y-%m-%d")
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     snapshot_path = snapshot_dir / "universe_operativo.csv"
     snapshot_df = filtered_universe.copy()
-    snapshot_df.insert(0, "effective_date", target_date.strftime("%Y-%m-%d"))
+    snapshot_df.insert(0, "effective_date", screen_date.strftime("%Y-%m-%d"))
     snapshot_df.to_csv(snapshot_path, index=False)
     return snapshot_path
 
 
 def save_breadth_history(
     *,
-    target_date: pd.Timestamp,
+    screen_date: pd.Timestamp,
     filtered_universe: pd.DataFrame,
     results_df: pd.DataFrame,
     snapshot_path: Path,
@@ -437,8 +437,8 @@ def save_breadth_history(
     row = pd.DataFrame(
         [
             {
-                "date": target_date.strftime("%Y-%m-%d"),
-                "effective_date": target_date.strftime("%Y-%m-%d"),
+                "date": screen_date.strftime("%Y-%m-%d"),
+                "effective_date": screen_date.strftime("%Y-%m-%d"),
                 "universe_snapshot_path": str(snapshot_path.relative_to(PROJECT_ROOT)),
                 "universe_total": universe_total,
                 "valid_sma5_count": valid_sma5_count,
@@ -458,7 +458,7 @@ def save_breadth_history(
 
     if BREADTH_HISTORY_CSV.exists():
         existing_df = pd.read_csv(BREADTH_HISTORY_CSV, keep_default_na=False)
-        existing_df = existing_df[existing_df["effective_date"].astype(str) != target_date.strftime("%Y-%m-%d")]
+        existing_df = existing_df[existing_df["effective_date"].astype(str) != screen_date.strftime("%Y-%m-%d")]
         history_df = pd.concat([existing_df, row], ignore_index=True)
     else:
         history_df = row
@@ -491,7 +491,7 @@ def classify_failed_price_tickers(
 
 
 def save_summary(
-    target_date: pd.Timestamp,
+    screen_date: pd.Timestamp,
     universe_total: int,
     universe_filtered: int,
     cache_covered_before_run: int,
@@ -502,8 +502,8 @@ def save_summary(
     failed_price_tickers: list[str],
 ) -> None:
     ensure_output_dir()
-    suffix = target_date.strftime("%Y%m%d")
-    target_dir = dated_output_dir(target_date)
+    suffix = screen_date.strftime("%Y%m%d")
+    target_dir = dated_output_dir(screen_date)
     target_dir.mkdir(parents=True, exist_ok=True)
     summary_path = target_dir / f"first_screen_summary_{suffix}.txt"
     coverage_pct = (cache_covered_before_run / universe_filtered * 100) if universe_filtered else 0.0
@@ -514,7 +514,7 @@ def save_summary(
     ) = classify_failed_price_tickers(failed_price_tickers)
 
     lines = [
-        f"Target date: {target_date.strftime('%Y-%m-%d')}",
+        f"Screen date: {screen_date.strftime('%Y-%m-%d')}",
         f"Writer script: {SCRIPT_NAME}",
         f"Writer version: {SCRIPT_SIGNATURE}",
         f"Universe total: {universe_total}",
@@ -550,7 +550,7 @@ def save_summary(
 
 
 def run_first_screen_for_date(
-    target_date: pd.Timestamp,
+    screen_date: pd.Timestamp,
     sample_size: int | None = None,
     config: FirstScreenConfig | None = None,
 ) -> FirstScreenRunResult:
@@ -561,11 +561,11 @@ def run_first_screen_for_date(
     effective_config = config or FirstScreenConfig()
     step_started_at = time.perf_counter()
     ensure_cache_dirs()
-    archive_existing_outputs(target_date)
+    archive_existing_outputs(screen_date)
     log_timing("setup cache dirs + archive outputs", step_started_at)
 
     step_started_at = time.perf_counter()
-    filtered_universe = load_operational_universe_for_date(target_date)
+    filtered_universe = load_operational_universe_for_date(screen_date)
     log_timing("load operational universe", step_started_at)
     universe = filtered_universe
     if sample_size is not None:
@@ -575,7 +575,7 @@ def run_first_screen_for_date(
     step_started_at = time.perf_counter()
     history_by_ticker, failed_price_tickers, price_stats = load_price_history_from_cache_only(
         tickers,
-        target_date,
+        screen_date,
         effective_config,
     )
     log_timing("load price history from cache only", step_started_at)
@@ -599,7 +599,7 @@ def run_first_screen_for_date(
             history=history,
             market_cap=market_caps.get(row.ticker),
             cache_metadata=load_price_cache_metadata(row.ticker),
-            target_date=target_date,
+            screen_date=screen_date,
             config=effective_config,
         )
         if result is not None:
@@ -617,16 +617,16 @@ def run_first_screen_for_date(
     log_timing("build result dataframes", step_started_at)
 
     step_started_at = time.perf_counter()
-    save_results(results_df, passed_df, target_date)
+    save_results(results_df, passed_df, screen_date)
     log_timing("save first screen results", step_started_at)
 
     step_started_at = time.perf_counter()
-    snapshot_path = save_breadth_universe_snapshot(filtered_universe, target_date)
+    snapshot_path = save_breadth_universe_snapshot(filtered_universe, screen_date)
     log_timing("save breadth universe snapshot", step_started_at)
 
     step_started_at = time.perf_counter()
     save_breadth_history(
-        target_date=target_date,
+        screen_date=screen_date,
         filtered_universe=filtered_universe,
         results_df=results_df,
         snapshot_path=snapshot_path,
@@ -635,7 +635,7 @@ def run_first_screen_for_date(
 
     step_started_at = time.perf_counter()
     save_summary(
-        target_date=target_date,
+        screen_date=screen_date,
         universe_total=len(universe),
         universe_filtered=len(filtered_universe),
         cache_covered_before_run=cache_covered_before_run,
@@ -648,7 +648,7 @@ def run_first_screen_for_date(
     log_timing("save summary", step_started_at)
 
     return FirstScreenRunResult(
-        target_date=target_date,
+        screen_date=screen_date,
         universe_total=len(universe),
         universe_filtered=len(filtered_universe),
         cache_covered_before_run=cache_covered_before_run,
@@ -700,9 +700,9 @@ def print_first_screen_run_summary(result: FirstScreenRunResult) -> None:
 
 
 def main() -> None:
-    target_date = prompt_target_date()
+    screen_date = prompt_screen_date()
     sample_size = prompt_sample_size()
-    result = run_first_screen_for_date(target_date, sample_size=sample_size)
+    result = run_first_screen_for_date(screen_date, sample_size=sample_size)
     print_first_screen_run_summary(result)
 
 

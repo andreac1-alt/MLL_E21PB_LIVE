@@ -38,16 +38,16 @@ class SecondScreenConfig:
 
 @dataclass
 class SecondScreenRunResult:
-    requested_target_date: pd.Timestamp
-    target_date: pd.Timestamp
+    requested_screen_date: pd.Timestamp
+    screen_date: pd.Timestamp
     first_passed_count: int
     missing_cache: list[str]
     results_df: pd.DataFrame
     screened_df: pd.DataFrame
 
 
-def prompt_target_date() -> pd.Timestamp:
-    raw_value = input("Data target (YYYY-MM-DD): ").strip()
+def prompt_screen_date() -> pd.Timestamp:
+    raw_value = input("Screen date (YYYY-MM-DD): ").strip()
     try:
         return pd.Timestamp(raw_value).normalize()
     except Exception as exc:  # noqa: BLE001
@@ -60,26 +60,26 @@ def round_or_none(value: Any, digits: int = 2) -> float | None:
     return round(float(value), digits)
 
 
-def dated_output_dir(target_date: pd.Timestamp) -> Path:
-    return archive_day_dir(target_date)
+def dated_output_dir(screen_date: pd.Timestamp) -> Path:
+    return archive_day_dir(screen_date)
 
 
-def load_first_screen_passed(target_date: pd.Timestamp) -> pd.DataFrame:
-    suffix = target_date.strftime("%Y%m%d")
+def load_first_screen_passed(screen_date: pd.Timestamp) -> pd.DataFrame:
+    suffix = screen_date.strftime("%Y%m%d")
     candidate_paths = [
-        resolve_archive_file(target_date, f"first_screen_passed_{suffix}.csv"),
+        resolve_archive_file(screen_date, f"first_screen_passed_{suffix}.csv"),
         OUTPUT_DIR / f"first_screen_passed_{suffix}.csv",
     ]
     input_path = next((path for path in candidate_paths if path.exists()), None)
     if input_path is None:
         raise FileNotFoundError(
             "File del primo screen non trovato. Esegui prima first_screen.py "
-            f"per la data {target_date.strftime('%Y-%m-%d')}."
+            f"per la data {screen_date.strftime('%Y-%m-%d')}."
         )
     return pd.read_csv(input_path)
 
 
-def load_cached_price_history(ticker: str, target_date: pd.Timestamp) -> pd.DataFrame | None:
+def load_cached_price_history(ticker: str, screen_date: pd.Timestamp) -> pd.DataFrame | None:
     cache_path = PRICE_CACHE_DIR / f"{ticker}.csv"
     if not cache_path.exists():
         return None
@@ -90,9 +90,9 @@ def load_cached_price_history(ticker: str, target_date: pd.Timestamp) -> pd.Data
         df.index = df.index.tz_localize(None)
     df = df.sort_index()
 
-    if df.empty or target_date not in df.index:
+    if df.empty or screen_date not in df.index:
         return None
-    return df.loc[:target_date].copy()
+    return df.loc[:screen_date].copy()
 
 
 def calculate_adr_pct(df: pd.DataFrame, window: int) -> pd.Series:
@@ -238,8 +238,8 @@ def analyze_ticker(
     return {
         "ticker": ticker,
         "exchange": exchange,
-        "requested_target_date": requested_screen_date.strftime("%Y-%m-%d"),
-        "effective_target_date": effective_screen_date.strftime("%Y-%m-%d"),
+        "requested_screen_date": requested_screen_date.strftime("%Y-%m-%d"),
+        "effective_screen_date": effective_screen_date.strftime("%Y-%m-%d"),
         "close": round_or_none(last_close),
         "sma50": round_or_none(last_sma50),
         "atr14_pct": round_or_none(last_atr14),
@@ -278,11 +278,11 @@ def analyze_ticker(
     }
 
 
-def archive_existing_outputs(target_date: pd.Timestamp) -> None:
+def archive_existing_outputs(screen_date: pd.Timestamp) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = target_date.strftime("%Y%m%d")
-    target_dir = dated_output_dir(target_date)
+    suffix = screen_date.strftime("%Y%m%d")
+    target_dir = dated_output_dir(screen_date)
     target_dir.mkdir(parents=True, exist_ok=True)
     existing_paths = [
         target_dir / f"second_screen_all_{suffix}.csv",
@@ -301,9 +301,9 @@ def archive_existing_outputs(target_date: pd.Timestamp) -> None:
         source_path.replace(archive_dir / source_path.name)
 
 
-def save_results(results_df: pd.DataFrame, screened_df: pd.DataFrame, target_date: pd.Timestamp) -> None:
-    suffix = target_date.strftime("%Y%m%d")
-    target_dir = dated_output_dir(target_date)
+def save_results(results_df: pd.DataFrame, screened_df: pd.DataFrame, screen_date: pd.Timestamp) -> None:
+    suffix = screen_date.strftime("%Y%m%d")
+    target_dir = dated_output_dir(screen_date)
     target_dir.mkdir(parents=True, exist_ok=True)
     results_to_save = results_df.copy()
     screened_to_save = screened_df.copy()
@@ -322,8 +322,8 @@ def empty_second_screen_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     results_columns = [
         "ticker",
         "exchange",
-        "requested_target_date",
-        "effective_target_date",
+        "requested_screen_date",
+        "effective_screen_date",
         "close",
         "sma50",
         "atr14_pct",
@@ -368,8 +368,6 @@ def run_second_screen_for_date(
     screen_date: pd.Timestamp | None = None,
     config: SecondScreenConfig | None = None,
     requested_screen_date: pd.Timestamp | None = None,
-    target_date: pd.Timestamp | None = None,
-    requested_target_date: pd.Timestamp | None = None,
 ) -> SecondScreenRunResult:
     def log_timing(step: str, started_at: float) -> None:
         elapsed = time.perf_counter() - started_at
@@ -377,11 +375,7 @@ def run_second_screen_for_date(
 
     effective_config = config or SecondScreenConfig()
     if screen_date is None:
-        if target_date is None:
-            raise ValueError("screen_date obbligatoria.")
-        screen_date = target_date
-    if requested_screen_date is None and requested_target_date is not None:
-        requested_screen_date = requested_target_date
+        raise ValueError("screen_date obbligatoria.")
     screen_date = pd.Timestamp(screen_date).normalize()
 
     step_started_at = time.perf_counter()
@@ -445,8 +439,8 @@ def run_second_screen_for_date(
         save_results(results_df, screened_df, screen_date)
         log_timing("save empty second screen results", step_started_at)
         return SecondScreenRunResult(
-            requested_target_date=requested_ts,
-            target_date=screen_date,
+            requested_screen_date=requested_ts,
+            screen_date=screen_date,
             first_passed_count=len(first_passed),
             missing_cache=missing_cache,
             results_df=results_df,
@@ -478,8 +472,8 @@ def run_second_screen_for_date(
     log_timing("save second screen results", step_started_at)
 
     return SecondScreenRunResult(
-        requested_target_date=requested_ts,
-        target_date=screen_date,
+        requested_screen_date=requested_ts,
+        screen_date=screen_date,
         first_passed_count=len(first_passed),
         missing_cache=missing_cache,
         results_df=results_df,
@@ -513,8 +507,8 @@ def print_second_screen_run_summary(result: SecondScreenRunResult) -> None:
 
 
 def main() -> None:
-    target_date = prompt_target_date()
-    result = run_second_screen_for_date(target_date)
+    screen_date = prompt_screen_date()
+    result = run_second_screen_for_date(screen_date)
     print_second_screen_run_summary(result)
 
 
